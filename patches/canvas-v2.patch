@@ -1,0 +1,37 @@
+diff --git a/dom/canvas/CanvasRenderingContext2D.cpp b/dom/canvas/CanvasRenderingContext2D.cpp
+index xxxxxxxxxx..yyyyyyyyyy 100644
+--- a/dom/canvas/CanvasRenderingContext2D.cpp
++++ b/dom/canvas/CanvasRenderingContext2D.cpp
+@@ -1,6 +1,7 @@
+ /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+ /* vim: set ts=8 sts=2 et sw=2 tw=80: */
+ /* This Source Code Form is subject to the terms of the Mozilla Public
+  * License, v. 2.0. If a copy of the MPL was not distributed with this
+  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ 
++#include "MaskConfig.hpp"
+ 
+ // TODO: Add your patch implementation here
+ // Example MaskConfig usage:
+ //
+ // if (auto value = MaskConfig::GetDouble("canvas-v2:parameter"))
+ //     return value.value();
+ //
+ // Available MaskConfig functions:
+ // - GetString(key) -> std::optional<std::string>
+ // - GetDouble(key) -> std::optional<double>
+ // - GetUint32(key) -> std::optional<uint32_t>
+ // - GetInt32(key) -> std::optional<int32_t>
+ // - GetBool(key) -> std::optional<bool>
+ // - CheckBool(key) -> bool (default false)
+
+diff --git a/dom/canvas/moz.build b/dom/canvas/moz.build
+index xxxxxxxxxx..yyyyyyyyyy 100644
+--- a/dom/canvas/moz.build
++++ b/dom/canvas/moz.build
+@@ -1,3 +1,6 @@
++# Tegufox patch: canvas-v2
++LOCAL_INCLUDES += ["/camoucfg"]
++
+ # -*- Mode: python; indent-tabs-mode: nil; tab-width: 40 -*-
+ # vim: set filetype=python:

@@ -1,0 +1,24 @@
+{
+  "name": "android-test",
+  "platform": "android-mobile",
+  "created": "2026-04-13T14:53:12.389216",
+  "description": "Android mobile device - Samsung Galaxy S21",
+  "config": {
+    "navigator.userAgent": "Mozilla/5.0 (Linux; Android 12; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+    "navigator.platform": "Linux armv81",
+    "navigator.hardwareConcurrency": 8,
+    "screen.width": 360,
+    "screen.height": 800,
+    "screen.colorDepth": 24,
+    "AudioContext:sampleRate": 48000,
+    "AudioContext:maxChannelCount": 2,
+    "canvas:seed": 4374467044,
+    "audio:seed": 5740812415,
+    "timezone": "America/New_York",
+    "locale": "en-US"
+  },
+  "metadata": {
+    "version": "1.0",
+    "tegufox_version": "0.1.0"
+  }
+}

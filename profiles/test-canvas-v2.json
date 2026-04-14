@@ -1,0 +1,32 @@
+{
+  "name": "test-canvas-v2",
+  "platform": "amazon-fba",
+  "created": "2026-04-13T21:37:17.444727",
+  "description": "Amazon FBA seller profile - macOS business setup",
+  "config": {
+    "navigator.userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "navigator.platform": "MacIntel",
+    "navigator.hardwareConcurrency": 10,
+    "screen.width": 1470,
+    "screen.height": 956,
+    "screen.colorDepth": 30,
+    "AudioContext:sampleRate": 48000,
+    "AudioContext:maxChannelCount": 2,
+    "canvas:seed": 6985932234,
+    "canvas:noise:enable": true,
+    "canvas:noise:strategy": "gpu",
+    "canvas:noise:intensity": 5e-05,
+    "canvas:noise:magnitude": 1,
+    "canvas:noise:edge-bias": 0.0002,
+    "canvas:noise:temporal": true,
+    "audio:seed": 6208307877,
+    "webGl:vendor": "Apple",
+    "webGl:renderer": "Apple M1 Pro",
+    "timezone": "America/Los_Angeles",
+    "locale": "en-US"
+  },
+  "metadata": {
+    "version": "1.0",
+    "tegufox_version": "0.1.0"
+  }
+}

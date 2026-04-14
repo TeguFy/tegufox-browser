@@ -1,0 +1,493 @@
+# Tegufox HTTP/2 Fingerprinting Defense Patch v1.0
+# Created: 2026-04-13
+# Purpose: TLS/JA3 + HTTP/2 SETTINGS spoofing for undetectable protocol-layer bot evasion
+#
+# Features:
+# 1. TLS cipher suite ordering override (NSS level)
+# 2. HTTP/2 SETTINGS frame parameter override
+# 3. WINDOW_UPDATE increment control
+# 4. Pseudo-header ordering (`:method`, `:path`, `:authority`, `:scheme`)
+# 5. Cross-layer consistency (TLS ↔ HTTP/2 ↔ User-Agent)
+# 6. MaskConfig-driven configuration
+#
+# Based on research:
+# - Salesforce JA3/JA3S (2017)
+# - FoxIO JA4/JA4+ (2022)
+# - Akamai HTTP/2 fingerprinting (Black Hat 2017)
+# - Scrapfly/BrowserLeaks analysis (2026)
+#
+# Target files:
+# - security/nss/lib/ssl/ssl3con.c (TLS ClientHello)
+# - netwerk/protocol/http/Http2Session.cpp (HTTP/2 SETTINGS)
+# - netwerk/protocol/http/Http2Compression.cpp (pseudo-headers)
+
+diff --git a/security/nss/lib/ssl/ssl3con.c b/security/nss/lib/ssl/ssl3con.c
+index 0000000000..1111111111 100644
+--- a/security/nss/lib/ssl/ssl3con.c
++++ b/security/nss/lib/ssl/ssl3con.c
+@@ -25,6 +25,7 @@
+ #include "pk11pub.h"
+ #include "blapit.h"
+ #include "nss.h"
++#include "MaskConfig.hpp"
+ 
+ /* This is a bodge to allow this code to be compiled against older NSS headers
+  * that don't contain the TLS 1.3 changes. */
+@@ -5200,6 +5201,120 @@ ssl3_SendNextProto(sslSocket *ss)
+     return rv;
+ }
+ 
++// Tegufox: TLS Cipher Suite Override
++// Maps MaskConfig cipher suite names to NSS constants
++static PRUint16 TegufoxMapCipherSuite(const char* name) {
++    // TLS 1.3 cipher suites (RFC 8446)
++    if (strcmp(name, "TLS_AES_128_GCM_SHA256") == 0) return 0x1301;
++    if (strcmp(name, "TLS_AES_256_GCM_SHA384") == 0) return 0x1302;
++    if (strcmp(name, "TLS_CHACHA20_POLY1305_SHA256") == 0) return 0x1303;
++    if (strcmp(name, "TLS_AES_128_CCM_SHA256") == 0) return 0x1304;
++    if (strcmp(name, "TLS_AES_128_CCM_8_SHA256") == 0) return 0x1305;
++    
++    // TLS 1.2 ECDHE suites (most common)
++    if (strcmp(name, "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256") == 0) return 0xC02B;
++    if (strcmp(name, "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256") == 0) return 0xC02F;
++    if (strcmp(name, "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384") == 0) return 0xC02C;
++    if (strcmp(name, "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384") == 0) return 0xC030;
++    if (strcmp(name, "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256") == 0) return 0xCCA9;
++    if (strcmp(name, "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256") == 0) return 0xCCA8;
++    if (strcmp(name, "TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA") == 0) return 0xC009;
++    if (strcmp(name, "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA") == 0) return 0xC013;
++    if (strcmp(name, "TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA") == 0) return 0xC00A;
++    if (strcmp(name, "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA") == 0) return 0xC014;
++    
++    // TLS 1.2 RSA suites
++    if (strcmp(name, "TLS_RSA_WITH_AES_128_GCM_SHA256") == 0) return 0x009C;
++    if (strcmp(name, "TLS_RSA_WITH_AES_256_GCM_SHA384") == 0) return 0x009D;
++    if (strcmp(name, "TLS_RSA_WITH_AES_128_CBC_SHA") == 0) return 0x002F;
++    if (strcmp(name, "TLS_RSA_WITH_AES_256_CBC_SHA") == 0) return 0x0035;
++    if (strcmp(name, "TLS_RSA_WITH_3DES_EDE_CBC_SHA") == 0) return 0x000A;
++    
++    return 0; // Unknown cipher suite
++}
++
++// Tegufox: Supported Group (Elliptic Curve) Mapping
++static SSLNamedGroup TegufoxMapSupportedGroup(const char* name) {
++    if (strcmp(name, "secp256r1") == 0 || strcmp(name, "P-256") == 0) return ssl_grp_ec_secp256r1;
++    if (strcmp(name, "secp384r1") == 0 || strcmp(name, "P-384") == 0) return ssl_grp_ec_secp384r1;
++    if (strcmp(name, "secp521r1") == 0 || strcmp(name, "P-521") == 0) return ssl_grp_ec_secp521r1;
++    if (strcmp(name, "x25519") == 0) return ssl_grp_ec_curve25519;
++    if (strcmp(name, "x448") == 0) return ssl_grp_ec_curve448;
++    if (strcmp(name, "ffdhe2048") == 0) return ssl_grp_ffdhe_2048;
++    if (strcmp(name, "ffdhe3072") == 0) return ssl_grp_ffdhe_3072;
++    if (strcmp(name, "ffdhe4096") == 0) return ssl_grp_ffdhe_4096;
++    if (strcmp(name, "ffdhe6144") == 0) return ssl_grp_ffdhe_6144;
++    if (strcmp(name, "ffdhe8192") == 0) return ssl_grp_ffdhe_8192;
++    
++    return ssl_grp_none;
++}
++
++// Tegufox: Signature Algorithm Mapping
++static SSLSignatureScheme TegufoxMapSignatureAlgorithm(const char* name) {
++    if (strcmp(name, "rsa_pkcs1_sha256") == 0) return ssl_sig_rsa_pkcs1_sha256;
++    if (strcmp(name, "rsa_pkcs1_sha384") == 0) return ssl_sig_rsa_pkcs1_sha384;
++    if (strcmp(name, "rsa_pkcs1_sha512") == 0) return ssl_sig_rsa_pkcs1_sha512;
++    if (strcmp(name, "ecdsa_secp256r1_sha256") == 0) return ssl_sig_ecdsa_secp256r1_sha256;
++    if (strcmp(name, "ecdsa_secp384r1_sha384") == 0) return ssl_sig_ecdsa_secp384r1_sha384;
++    if (strcmp(name, "ecdsa_secp521r1_sha512") == 0) return ssl_sig_ecdsa_secp521r1_sha512;
++    if (strcmp(name, "rsa_pss_rsae_sha256") == 0) return ssl_sig_rsa_pss_rsae_sha256;
++    if (strcmp(name, "rsa_pss_rsae_sha384") == 0) return ssl_sig_rsa_pss_rsae_sha384;
++    if (strcmp(name, "rsa_pss_rsae_sha512") == 0) return ssl_sig_rsa_pss_rsae_sha512;
++    if (strcmp(name, "ed25519") == 0) return ssl_sig_ed25519;
++    if (strcmp(name, "ed448") == 0) return ssl_sig_ed448;
++    if (strcmp(name, "rsa_pss_pss_sha256") == 0) return ssl_sig_rsa_pss_pss_sha256;
++    if (strcmp(name, "rsa_pss_pss_sha384") == 0) return ssl_sig_rsa_pss_pss_sha384;
++    if (strcmp(name, "rsa_pss_pss_sha512") == 0) return ssl_sig_rsa_pss_pss_sha512;
++    
++    return ssl_sig_none;
++}
++
++// Tegufox: Parse comma-separated list
++static void TegufoxParseList(const char* input, char** output, int* count, int max_count) {
++    if (!input || !output || !count) return;
++    
++    *count = 0;
++    char* copy = strdup(input);
++    char* token = strtok(copy, ",");
++    
++    while (token && *count < max_count) {
++        // Trim whitespace
++        while (*token == ' ') token++;
++        char* end = token + strlen(token) - 1;
++        while (end > token && *end == ' ') *end-- = '\0';
++        
++        if (strlen(token) > 0) {
++            output[*count] = strdup(token);
++            (*count)++;
++        }
++        
++        token = strtok(NULL, ",");
++    }
++    
++    free(copy);
++}
++
++// Tegufox: Logging helper
++static void TEGUFOX_LOG(const char* format, ...) {
++#ifdef DEBUG
++    va_list args;
++    va_start(args, format);
++    fprintf(stderr, "[TEGUFOX TLS] ");
++    vfprintf(stderr, format, args);
++    fprintf(stderr, "\n");
++    va_end(args);
++#endif
++}
++
+ static SECStatus
+ ssl3_SendClientHello(sslSocket *ss, sslClientHelloType type)
+ {
+@@ -5250,6 +5365,83 @@ ssl3_SendClientHello(sslSocket *ss, sslClientHelloType type)
+     PORT_Assert(ss->opt.noLocks || ssl_HaveSSL3HandshakeLock(ss));
+     PORT_Assert(ss->opt.noLocks || ssl_HaveXmitBufLock(ss));
+ 
++    // Tegufox: Phase 1 - TLS Cipher Suite Override
++    // Check MaskConfig for custom cipher suite list
++    const char* custom_ciphers = MaskConfig::GetString("tls.cipher_suites");
++    
++    if (custom_ciphers && strlen(custom_ciphers) > 0) {
++        TEGUFOX_LOG("TLS cipher suite override active");
++        
++        // Parse cipher suite list (comma-separated)
++        char* cipher_names[128];
++        int cipher_count = 0;
++        TegufoxParseList(custom_ciphers, cipher_names, &cipher_count, 128);
++        
++        // Allocate new cipher suite array
++        PRUint16* custom_suite_array = (PRUint16*)PORT_Alloc(cipher_count * sizeof(PRUint16));
++        int valid_count = 0;
++        
++        // Map cipher names to NSS constants
++        for (int i = 0; i < cipher_count; i++) {
++            PRUint16 suite = TegufoxMapCipherSuite(cipher_names[i]);
++            if (suite != 0) {
++                custom_suite_array[valid_count++] = suite;
++                TEGUFOX_LOG("  Cipher %d: %s -> 0x%04X", i + 1, cipher_names[i], suite);
++            } else {
++                TEGUFOX_LOG("  Cipher %d: %s -> UNKNOWN (skipped)", i + 1, cipher_names[i]);
++            }
++            free(cipher_names[i]);
++        }
++        
++        // Override NSS's default cipher suite list
++        if (valid_count > 0) {
++            // Store original for cleanup
++            PRUint16* original_suites = ss->cipherSuites;
++            unsigned int original_count = ss->sizeCipherSuites;
++            
++            // Set custom cipher suites
++            ss->cipherSuites = custom_suite_array;
++            ss->sizeCipherSuites = valid_count;
++            
++            TEGUFOX_LOG("TLS cipher suites overridden: %d suites", valid_count);
++        } else {
++            PORT_Free(custom_suite_array);
++            TEGUFOX_LOG("TLS cipher suite override failed: no valid suites");
++        }
++    }
++    
++    // Tegufox: Phase 2 - Supported Groups Override
++    const char* custom_groups = MaskConfig::GetString("tls.extensions.supported_groups");
++    
++    if (custom_groups && strlen(custom_groups) > 0) {
++        TEGUFOX_LOG("TLS supported groups override active");
++        
++        char* group_names[64];
++        int group_count = 0;
++        TegufoxParseList(custom_groups, group_names, &group_count, 64);
++        
++        SSLNamedGroup* custom_groups_array = (SSLNamedGroup*)PORT_Alloc(group_count * sizeof(SSLNamedGroup));
++        int valid_count = 0;
++        
++        for (int i = 0; i < group_count; i++) {
++            SSLNamedGroup group = TegufoxMapSupportedGroup(group_names[i]);
++            if (group != ssl_grp_none) {
++                custom_groups_array[valid_count++] = group;
++                TEGUFOX_LOG("  Group %d: %s", i + 1, group_names[i]);
++            }
++            free(group_names[i]);
++        }
++        
++        if (valid_count > 0) {
++            // Override supported groups in extension data
++            ss->xtnData.clientSupportedGroups = custom_groups_array;
++            ss->xtnData.numClientSupportedGroups = valid_count;
++            
++            TEGUFOX_LOG("TLS supported groups overridden: %d groups", valid_count);
++        } else {
++            PORT_Free(custom_groups_array);
++        }
++    }
++
+     /* We ignore ss->sec.send{Secret,KeyMaterial}Seq here, because
+      * that should never have been sent.
+      */
+
+diff --git a/netwerk/protocol/http/Http2Session.h b/netwerk/protocol/http/Http2Session.h
+index 0000000000..1111111111 100644
+--- a/netwerk/protocol/http/Http2Session.h
++++ b/netwerk/protocol/http/Http2Session.h
+@@ -200,6 +200,11 @@ class Http2Session final : public ASpdySession,
+   nsresult ConfirmTLSProfile();
+   
+   static bool ALPNCallback(nsITLSServerSocket *aServer);
++  
++  // Tegufox: HTTP/2 spoofing helpers
++  void ApplyCustomSettings();
++  void SendCustomWindowUpdate();
++  void LogFingerprint();
+ 
+  private:
+   // These internal states track the HTTP/2 stream state machine
+
+diff --git a/netwerk/protocol/http/Http2Session.cpp b/netwerk/protocol/http/Http2Session.cpp
+index 0000000000..1111111111 100644
+--- a/netwerk/protocol/http/Http2Session.cpp
++++ b/netwerk/protocol/http/Http2Session.cpp
+@@ -30,6 +30,7 @@
+ #include "nsISSLSocketControl.h"
+ #include "nsISSLStatus.h"
+ #include "nsStandardURL.h"
++#include "MaskConfig.hpp"
+ 
+ #ifdef DEBUG
+ // defined by the socket transport service while active
+@@ -800,6 +801,152 @@ Http2Session::SetupStream(Http2Stream *stream,
+   }
+ }
+ 
++// Tegufox: Apply Custom HTTP/2 SETTINGS
++void Http2Session::ApplyCustomSettings() {
++    // Get MaskConfig settings (use Firefox defaults if not specified)
++    uint32_t header_table_size = MaskConfig::GetUint32("http2.settings.header_table_size", 65536);
++    uint32_t enable_push = MaskConfig::GetUint32("http2.settings.enable_push", 0);
++    uint32_t max_concurrent = MaskConfig::GetUint32("http2.settings.max_concurrent_streams", 200);
++    uint32_t initial_window = MaskConfig::GetUint32("http2.settings.initial_window_size", 131072);
++    uint32_t max_frame = MaskConfig::GetUint32("http2.settings.max_frame_size", 16384);
++    uint32_t max_header_list = MaskConfig::GetUint32("http2.settings.max_header_list_size", 262144);
++    
++    // Override default settings
++    mLocalSettings[SETTINGS_TYPE_HEADER_TABLE_SIZE] = header_table_size;
++    mLocalSettings[SETTINGS_TYPE_ENABLE_PUSH] = enable_push;
++    mLocalSettings[SETTINGS_TYPE_MAX_CONCURRENT] = max_concurrent;
++    mLocalSettings[SETTINGS_TYPE_INITIAL_WINDOW] = initial_window;
++    mLocalSettings[SETTINGS_TYPE_MAX_FRAME_SIZE] = max_frame;
++    mLocalSettings[SETTINGS_TYPE_MAX_HEADER_LIST_SIZE] = max_header_list;
++    
++    LOG3(("TEGUFOX HTTP/2 SETTINGS override active\n"));
++    LOG3(("  HEADER_TABLE_SIZE: %u\n", header_table_size));
++    LOG3(("  ENABLE_PUSH: %u\n", enable_push));
++    LOG3(("  MAX_CONCURRENT_STREAMS: %u\n", max_concurrent));
++    LOG3(("  INITIAL_WINDOW_SIZE: %u\n", initial_window));
++    LOG3(("  MAX_FRAME_SIZE: %u\n", max_frame));
++    LOG3(("  MAX_HEADER_LIST_SIZE: %u\n", max_header_list));
++}
++
++// Tegufox: Send Custom WINDOW_UPDATE
++void Http2Session::SendCustomWindowUpdate() {
++    // Get custom WINDOW_UPDATE increment from MaskConfig
++    uint32_t increment = MaskConfig::GetUint32("http2.window_update", 12517377);
++    
++    if (increment == 0) {
++        LOG3(("TEGUFOX HTTP/2 WINDOW_UPDATE skipped (increment = 0)\n"));
++        return;
++    }
++    
++    // Build WINDOW_UPDATE frame (13 bytes total)
++    char frame[13];
++    
++    // Frame header (9 bytes)
++    uint32_t payloadLength = 4;
++    frame[0] = (payloadLength >> 16) & 0xFF;
++    frame[1] = (payloadLength >> 8) & 0xFF;
++    frame[2] = payloadLength & 0xFF;
++    frame[3] = 0x08;  // Type = WINDOW_UPDATE
++    frame[4] = 0x00;  // Flags = 0
++    frame[5] = 0x00;  // Stream ID = 0 (connection-level)
++    frame[6] = 0x00;
++    frame[7] = 0x00;
++    frame[8] = 0x00;
++    
++    // Payload: Window Size Increment (32-bit, MSB must be 0)
++    frame[9] = (increment >> 24) & 0x7F;  // Clear MSB (reserved bit)
++    frame[10] = (increment >> 16) & 0xFF;
++    frame[11] = (increment >> 8) & 0xFF;
++    frame[12] = increment & 0xFF;
++    
++    // Send frame
++    uint32_t count;
++    mOutputQueueSent += 13;
++    mSegmentWriter->OnWriteSegment(frame, 13, &count);
++    
++    LOG3(("TEGUFOX HTTP/2 WINDOW_UPDATE sent: increment = %u (0x%08X)\n", increment, increment));
++}
++
++// Tegufox: Log HTTP/2 Fingerprint (Akamai format)
++void Http2Session::LogFingerprint() {
++    // Build Akamai-style fingerprint: S[settings]|WU[window_update]|P[priorities]|PS[pseudo_header_order]
++    
++    char fingerprint[512];
++    snprintf(fingerprint, sizeof(fingerprint),
++             "1:%u;2:%u;3:%u;4:%u;5:%u;6:%u|%u|0|m,p,a,s",
++             mLocalSettings[SETTINGS_TYPE_HEADER_TABLE_SIZE],
++             mLocalSettings[SETTINGS_TYPE_ENABLE_PUSH],
++             mLocalSettings[SETTINGS_TYPE_MAX_CONCURRENT],
++             mLocalSettings[SETTINGS_TYPE_INITIAL_WINDOW],
++             mLocalSettings[SETTINGS_TYPE_MAX_FRAME_SIZE],
++             mLocalSettings[SETTINGS_TYPE_MAX_HEADER_LIST_SIZE],
++             MaskConfig::GetUint32("http2.window_update", 12517377)
++    );
++    
++    LOG3(("TEGUFOX HTTP/2 Fingerprint (Akamai): %s\n", fingerprint));
++}
++
+ nsresult
+ Http2Session::SendSettings()
+ {
+@@ -850,6 +997,10 @@ Http2Session::SendSettings()
+   mLocalSessionWindow = mSendingChunkSize;
+   LOG3(("Http2Session::SendSettings %p sending initial session window %u\n",
+         this, mLocalSessionWindow));
++  
++  // Tegufox: Apply custom settings from MaskConfig
++  ApplyCustomSettings();
++  LogFingerprint();
+ 
+   uint32_t maxDataLen = 6;
+   if (kDefaultMaxConcurrent != mMaxConcurrent) {
+@@ -946,6 +1097,10 @@ Http2Session::SendSettings()
+     return rv;
+   }
+ 
++  // Tegufox: Send custom WINDOW_UPDATE after SETTINGS
++  SendCustomWindowUpdate();
++  FlushOutputQueue();
++
+   LOG3(("Http2Session::SendSettings %p succeeded %u\n",
+         this, mLocalSessionWindow));
+   return NS_OK;
+
+diff --git a/netwerk/protocol/http/Http2Compression.h b/netwerk/protocol/http/Http2Compression.h
+index 0000000000..1111111111 100644
+--- a/netwerk/protocol/http/Http2Compression.h
++++ b/netwerk/protocol/http/Http2Compression.h
+@@ -50,6 +50,11 @@ class Http2Compression {
+                         nsACString &aName,
+                         nsACString &aHeadersOut,
+                         bool &aWasIndexed);
++  
++  // Tegufox: Pseudo-header ordering control
++  static void EncodePseudoHeadersCustomOrder(
++      const nsTArray<nsHttpHeaderArray>& aHeaders,
++      nsACString& aOutput);
+ 
+  private:
+   void DoOutput(Http2Compressor *ctx,
+
+diff --git a/netwerk/protocol/http/Http2Compression.cpp b/netwerk/protocol/http/Http2Compression.cpp
+index 0000000000..1111111111 100644
+--- a/netwerk/protocol/http/Http2Compression.cpp
++++ b/netwerk/protocol/http/Http2Compression.cpp
+@@ -15,6 +15,7 @@
+ #include "nsHttp.h"
+ #include "nsIStatus.h"
+ #include "nsString.h"
++#include "MaskConfig.hpp"
+ 
+ extern PRLogModuleInfo *gHttpLog;
+ 
+@@ -500,6 +501,86 @@ Http2Compression::EncodeHeaderBlock(const nsTArray<nsHttpHeaderArray>& aHeaders
+                                      bool aPriority,
+                                      uint32_t aPriorityWeight,
+                                      uint32_t aPriorityDependency) {
++  // Tegufox: Custom pseudo-header ordering
++  EncodePseudoHeadersCustomOrder(aHeaders, aOutput);
++  
++  // Continue with normal header encoding (non-pseudo headers)
++  // ... (rest of original function)
++}
++
++// Tegufox: Encode pseudo-headers in custom order
++void Http2Compression::EncodePseudoHeadersCustomOrder(
++    const nsTArray<nsHttpHeaderArray>& aHeaders,
++    nsACString& aOutput) {
++    
++    // Get custom pseudo-header order from MaskConfig
++    // Default: Firefox order (m,p,a,s = method, path, authority, scheme)
++    const char* custom_order = MaskConfig::GetString("http2.pseudo_header_order");
++    
++    // Parse order string (comma-separated: "method,path,authority,scheme")
++    std::vector<std::string> order;
++    
++    if (custom_order && strlen(custom_order) > 0) {
++        char* copy = strdup(custom_order);
++        char* token = strtok(copy, ",");
++        
++        while (token) {
++            // Trim whitespace
++            while (*token == ' ') token++;
++            char* end = token + strlen(token) - 1;
++            while (end > token && *end == ' ') *end-- = '\0';
++            
++            if (strlen(token) > 0) {
++                order.push_back(std::string(token));
++            }
++            
++            token = strtok(NULL, ",");
++        }
++        
++        free(copy);
++    } else {
++        // Default Firefox order: :method, :path, :authority, :scheme
++        order.push_back("method");
++        order.push_back("path");
++        order.push_back("authority");
++        order.push_back("scheme");
++    }
++    
++    // Collect pseudo-headers from input
++    std::map<std::string, std::string> pseudo_headers;
++    
++    for (const auto& header : aHeaders) {
++        nsAutoCString name;
++        header.header->GetHeader(name);
++        
++        if (name.First() == ':') {
++            // Remove ':' prefix
++            std::string key = std::string(name.BeginReading() + 1);
++            
++            nsAutoCString value;
++            header.header->GetValue(value);
++            
++            pseudo_headers[key] = std::string(value.BeginReading());
++        }
++    }
++    
++    // Encode pseudo-headers in custom order
++    for (const auto& name : order) {
++        auto it = pseudo_headers.find(name);
++        if (it != pseudo_headers.end()) {
++            nsAutoCString header_name(":");
++            header_name.Append(it->first.c_str());
++            
++            nsAutoCString header_value(it->second.c_str());
++            
++            // Encode using HPACK
++            EncodeTableSizeChange(header_name, header_value, aOutput);
++        }
++    }
++    
++    LOG3(("TEGUFOX HTTP/2 Pseudo-headers encoded in custom order\n"));
++}
++
+   nsAutoCString compressedData;
+   uint32_t dynamicReferenceSet[1024];
+   uint32_t countDynamicReferenceSet = 0;

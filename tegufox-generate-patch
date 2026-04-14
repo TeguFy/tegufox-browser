@@ -1,0 +1,759 @@
+#!/usr/bin/env python3
+"""
+Tegufox Patch Generator
+Generates Camoufox-compatible patches from templates
+
+Phase 1 - Week 1: Core toolkit component
+"""
+
+import sys
+import os
+import re
+from pathlib import Path
+from datetime import datetime
+from typing import Dict, List, Optional, Tuple
+
+# ANSI color codes for terminal output
+class Colors:
+    HEADER = '\033[95m'
+    BLUE = '\033[94m'
+    CYAN = '\033[96m'
+    GREEN = '\033[92m'
+    YELLOW = '\033[93m'
+    RED = '\033[91m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
+    END = '\033[0m'
+
+def print_logo():
+    """Print Tegufox ASCII logo banner"""
+    logo = f"""
+{Colors.HEADER}{Colors.BOLD}
+   ╔════════════════════════════════════════════════════════╗
+   ║              🦎 TEGUFOX BROWSER TOOLKIT 🔥             ║
+   ║           Advanced Anti-Detect Browser Tools           ║
+   ╚════════════════════════════════════════════════════════╝
+{Colors.END}"""
+    print(logo)
+
+def print_header(text: str):
+    """Print colored header"""
+    print(f"\n{Colors.HEADER}{Colors.BOLD}{'='*60}{Colors.END}")
+    print(f"{Colors.HEADER}{Colors.BOLD}{text.center(60)}{Colors.END}")
+    print(f"{Colors.HEADER}{Colors.BOLD}{'='*60}{Colors.END}\n")
+
+def print_success(text: str):
+    """Print success message"""
+    print(f"{Colors.GREEN}✅ {text}{Colors.END}")
+
+def print_error(text: str):
+    """Print error message"""
+    print(f"{Colors.RED}❌ {text}{Colors.END}")
+
+def print_info(text: str):
+    """Print info message"""
+    print(f"{Colors.CYAN}ℹ️  {text}{Colors.END}")
+
+def print_warning(text: str):
+    """Print warning message"""
+    print(f"{Colors.YELLOW}⚠️  {text}{Colors.END}")
+
+
+# Patch Pattern Templates
+PATCH_PATTERNS = {
+    "1": {
+        "name": "Simple Value Override",
+        "description": "Override single API return value with MaskConfig",
+        "complexity": "Simple (10-15 min)",
+        "example": "navigator.userAgent, screen.width, window.innerHeight"
+    },
+    "2": {
+        "name": "Conditional Behavior Change",
+        "description": "Enable/disable features with boolean flag",
+        "complexity": "Simple (10-15 min)",
+        "example": "Feature flags, behavior switches"
+    },
+    "3": {
+        "name": "Value with Fallback",
+        "description": "Config value with default fallback",
+        "complexity": "Simple (5-10 min)",
+        "example": "mediaDevices count, default settings"
+    },
+    "4": {
+        "name": "Complex Structure Override",
+        "description": "Override multiple related values (rect, array)",
+        "complexity": "Medium (20-30 min)",
+        "example": "Screen dimensions, viewport settings"
+    },
+    "5": {
+        "name": "Nested Config Access",
+        "description": "Hierarchical config (e.g., WebGL parameters)",
+        "complexity": "Medium (30-45 min)",
+        "example": "webGl:parameters, complex hierarchies"
+    },
+    "6": {
+        "name": "Early Return Pattern",
+        "description": "Override at function start, preserve original logic",
+        "complexity": "Simple (10-15 min)",
+        "example": "Quick overrides with fallback"
+    }
+}
+
+# MaskConfig getter types
+MASKCONFIG_TYPES = {
+    "string": "GetString",
+    "int32": "GetInt32",
+    "uint32": "GetUint32",
+    "uint64": "GetUint64",
+    "double": "GetDouble",
+    "bool": "GetBool",
+    "bool_check": "CheckBool",
+    "string_list": "GetStringList",
+    "rect": "GetRect",
+    "nested": "GetNested"
+}
+
+# C++ type mappings
+CPP_TYPES = {
+    "string": "std::string",
+    "int32": "int32_t",
+    "uint32": "uint32_t",
+    "uint64": "uint64_t",
+    "double": "double",
+    "bool": "bool",
+    "void": "void",
+    "nsresult": "nsresult"
+}
+
+
+def select_pattern() -> Tuple[str, Dict]:
+    """Interactive pattern selection"""
+    print_header("TEGUFOX PATCH GENERATOR")
+    
+    print(f"{Colors.BOLD}Select a patch pattern:{Colors.END}\n")
+    
+    for key, pattern in PATCH_PATTERNS.items():
+        print(f"{Colors.CYAN}[{key}]{Colors.END} {Colors.BOLD}{pattern['name']}{Colors.END}")
+        print(f"    {pattern['description']}")
+        print(f"    {Colors.YELLOW}Complexity:{Colors.END} {pattern['complexity']}")
+        print(f"    {Colors.YELLOW}Example:{Colors.END} {pattern['example']}\n")
+    
+    while True:
+        choice = input(f"{Colors.BOLD}Enter pattern number (1-6): {Colors.END}").strip()
+        if choice in PATCH_PATTERNS:
+            pattern = PATCH_PATTERNS[choice]
+            print_success(f"Selected: {pattern['name']}")
+            return choice, pattern
+        print_error("Invalid choice. Please enter 1-6.")
+
+
+def get_input(prompt: str, default: Optional[str] = None, required: bool = True) -> str:
+    """Get user input with optional default"""
+    if default:
+        prompt = f"{prompt} [{default}]: "
+    else:
+        prompt = f"{prompt}: "
+    
+    while True:
+        value = input(f"{Colors.BOLD}{prompt}{Colors.END}").strip()
+        
+        if value:
+            return value
+        elif default:
+            return default
+        elif not required:
+            return ""
+        else:
+            print_error("This field is required.")
+
+
+def select_type(prompt: str) -> str:
+    """Select MaskConfig type"""
+    print(f"\n{Colors.BOLD}Available types:{Colors.END}")
+    types_list = list(MASKCONFIG_TYPES.keys())
+    for i, type_name in enumerate(types_list, 1):
+        print(f"  {Colors.CYAN}[{i}]{Colors.END} {type_name} → MaskConfig::{MASKCONFIG_TYPES[type_name]}()")
+    
+    while True:
+        choice = input(f"{Colors.BOLD}{prompt} (1-{len(types_list)}): {Colors.END}").strip()
+        try:
+            idx = int(choice) - 1
+            if 0 <= idx < len(types_list):
+                type_name = types_list[idx]
+                print_success(f"Selected: {type_name}")
+                return type_name
+        except ValueError:
+            pass
+        print_error(f"Invalid choice. Please enter 1-{len(types_list)}.")
+
+
+def validate_config_key(key: str) -> bool:
+    """Validate config key format"""
+    # Should be: word.word or word:word
+    pattern = r'^[a-zA-Z][a-zA-Z0-9]*[.:]([a-zA-Z][a-zA-Z0-9]*|[a-zA-Z][a-zA-Z0-9]*:[a-zA-Z][a-zA-Z0-9]*)$'
+    if re.match(pattern, key):
+        return True
+    
+    # Also allow nested keys like webGl:parameters
+    if ':' in key or '.' in key:
+        return True
+    
+    return False
+
+
+def generate_patch_pattern_1(config: Dict) -> str:
+    """Generate Pattern 1: Simple Value Override"""
+    
+    getter = MASKCONFIG_TYPES[config['type']]
+    cpp_type = CPP_TYPES.get(config['return_type'], config['return_type'])
+    
+    patch = f"""diff --git a/{config['file_path']} b/{config['file_path']}
+index 0000000000..1111111111 100644
+--- a/{config['file_path']}
++++ b/{config['file_path']}
+@@ -1,6 +1,7 @@
+ #include "{config.get('existing_header', 'mozilla/dom/Something.h')}"
++#include "MaskConfig.hpp"
+ 
+ namespace {config.get('namespace', 'mozilla::dom')} {{
+ 
+@@ -10,6 +11,8 @@ namespace {config.get('namespace', 'mozilla::dom')} {{
+ {cpp_type} {config['class_name']}::{config['method_name']}({config.get('params', '')}) {{
++  if (auto value = MaskConfig::{getter}("{config['config_key']}"))
++    return value.value();
++
+   // Original implementation
+   {config.get('original_code', 'return defaultValue;')}
+ }}
+"""
+    
+    # Add moz.build modification
+    moz_build_path = str(Path(config['file_path']).parent / 'moz.build')
+    patch += f"""
+diff --git a/{moz_build_path} b/{moz_build_path}
+index 0000000000..1111111111 100644
+--- a/{moz_build_path}
++++ b/{moz_build_path}
+@@ -100,3 +100,6 @@
+ FINAL_LIBRARY = "xul"
++
++# Tegufox: Custom patch - {config['patch_name']}
++LOCAL_INCLUDES += ["/camoucfg"]
+"""
+    
+    return patch
+
+
+def generate_patch_pattern_2(config: Dict) -> str:
+    """Generate Pattern 2: Conditional Behavior Change"""
+    
+    patch = f"""diff --git a/{config['file_path']} b/{config['file_path']}
+index 0000000000..1111111111 100644
+--- a/{config['file_path']}
++++ b/{config['file_path']}
+@@ -1,6 +1,7 @@
+ #include "{config.get('existing_header', 'mozilla/dom/Something.h')}"
++#include "MaskConfig.hpp"
+ 
+ namespace {config.get('namespace', 'mozilla::dom')} {{
+ 
+@@ -10,6 +11,10 @@ namespace {config.get('namespace', 'mozilla::dom')} {{
+ {config.get('return_type', 'bool')} {config['class_name']}::{config['method_name']}({config.get('params', '')}) {{
++  if (MaskConfig::CheckBool("{config['config_key']}")) {{
++    {config.get('custom_behavior', 'return true;')}
++  }}
++
+   // Original implementation
+   {config.get('original_code', 'return false;')}
+ }}
+"""
+    
+    # Add moz.build
+    moz_build_path = str(Path(config['file_path']).parent / 'moz.build')
+    patch += f"""
+diff --git a/{moz_build_path} b/{moz_build_path}
+index 0000000000..1111111111 100644
+--- a/{moz_build_path}
++++ b/{moz_build_path}
+@@ -100,3 +100,6 @@
+ FINAL_LIBRARY = "xul"
++
++# Tegufox: Custom patch - {config['patch_name']}
++LOCAL_INCLUDES += ["/camoucfg"]
+"""
+    
+    return patch
+
+
+def generate_patch_pattern_3(config: Dict) -> str:
+    """Generate Pattern 3: Value with Fallback"""
+    
+    getter = MASKCONFIG_TYPES[config['type']]
+    cpp_type = CPP_TYPES.get(config['type'], config['type'])
+    
+    patch = f"""diff --git a/{config['file_path']} b/{config['file_path']}
+index 0000000000..1111111111 100644
+--- a/{config['file_path']}
++++ b/{config['file_path']}
+@@ -1,6 +1,7 @@
+ #include "{config.get('existing_header', 'mozilla/dom/Something.h')}"
++#include "MaskConfig.hpp"
+ 
+ namespace {config.get('namespace', 'mozilla::dom')} {{
+ 
+@@ -10,7 +11,8 @@ namespace {config.get('namespace', 'mozilla::dom')} {{
+ void {config['class_name']}::{config['method_name']}({config.get('params', '')}) {{
+-  {cpp_type} {config['variable_name']} = {config.get('original_value', '0')};
++  {cpp_type} {config['variable_name']} = MaskConfig::{getter}("{config['config_key']}")
++                     .value_or({config['fallback_value']});
+   
+   // Use {config['variable_name']}...
+ }}
+"""
+    
+    # Add moz.build
+    moz_build_path = str(Path(config['file_path']).parent / 'moz.build')
+    patch += f"""
+diff --git a/{moz_build_path} b/{moz_build_path}
+index 0000000000..1111111111 100644
+--- a/{moz_build_path}
++++ b/{moz_build_path}
+@@ -100,3 +100,6 @@
+ FINAL_LIBRARY = "xul"
++
++# Tegufox: Custom patch - {config['patch_name']}
++LOCAL_INCLUDES += ["/camoucfg"]
+"""
+    
+    return patch
+
+
+def generate_patch_pattern_4(config: Dict) -> str:
+    """Generate Pattern 4: Complex Structure Override"""
+    
+    # Determine rect type based on element type
+    rect_getter = "GetRect"  # Default
+    if config['element_type'] == "int32":
+        rect_getter = "GetInt32Rect"
+    elif config['element_type'] == "double":
+        rect_getter = "GetDoubleRect"
+    
+    # Parse config keys
+    keys = config['config_keys'].split(',')
+    keys = [k.strip() for k in keys]
+    
+    if len(keys) != 4:
+        raise ValueError("Pattern 4 requires exactly 4 config keys (e.g., left, top, width, height)")
+    
+    # Generate patch
+    patch = f"""diff --git a/{config['file_path']} b/{config['file_path']}
+index 0000000000..1111111111 100644
+--- a/{config['file_path']}
++++ b/{config['file_path']}
+@@ -1,6 +1,7 @@
+ #include "{config.get('existing_header', 'mozilla/dom/Something.h')}"
++#include "MaskConfig.hpp"
+ 
+ namespace {config.get('namespace', 'mozilla::dom')} {{
+ 
+@@ -10,6 +11,15 @@ namespace {config.get('namespace', 'mozilla::dom')} {{
+ {config.get('return_type', 'nsRect')} {config['class_name']}::{config['method_name']}({config.get('params', '')}) {{
++  // Tegufox: {config['patch_name']} - Complex Structure Override
++  if (auto conf = MaskConfig::{rect_getter}(
++          "{keys[0]}", 
++          "{keys[1]}",
++          "{keys[2]}", 
++          "{keys[3]}")) {{
++    auto values = conf.value();
++    {config.get('return_statement', 'return nsRect(values[0], values[1], values[2], values[3]);')}
++  }}
++
+   // Original implementation
+   {config.get('original_code', 'return nsRect();')}
+ }}
+"""
+    
+    # Add moz.build modification
+    moz_build_path = str(Path(config['file_path']).parent / 'moz.build')
+    patch += f"""
+diff --git a/{moz_build_path} b/{moz_build_path}
+index 0000000000..1111111111 100644
+--- a/{moz_build_path}
++++ b/{moz_build_path}
+@@ -100,3 +100,6 @@
+ FINAL_LIBRARY = "xul"
++
++# Tegufox: Custom patch - {config['patch_name']}
++LOCAL_INCLUDES += ["/camoucfg"]
+"""
+    
+    return patch
+
+
+def generate_patch_pattern_5(config: Dict) -> str:
+    """Generate Pattern 5: Nested Config Access"""
+    
+    # Determine the value type extraction
+    value_type = config.get('value_type', 'std::string')
+    json_type = config.get('json_type', 'std::string')
+    
+    # Generate patch
+    patch = f"""diff --git a/{config['file_path']} b/{config['file_path']}
+index 0000000000..1111111111 100644
+--- a/{config['file_path']}
++++ b/{config['file_path']}
+@@ -1,6 +1,7 @@
+ #include "{config.get('existing_header', 'mozilla/dom/Something.h')}"
++#include "MaskConfig.hpp"
+ 
+ namespace {config.get('namespace', 'mozilla::dom')} {{
+ 
+@@ -10,6 +11,12 @@ namespace {config.get('namespace', 'mozilla::dom')} {{
+ {value_type} {config['class_name']}::{config['method_name']}({config.get('params', '')}) {{
++  // Tegufox: {config['patch_name']} - Nested Config Access
++  auto data = MaskConfig::GetNested("{config['parent_key']}", "{config['child_key']}");
++  if (data) {{
++    return data.value().get<{json_type}>();
++  }}
++
+   // Original implementation
+   {config.get('original_code', 'return defaultValue;')}
+ }}
+"""
+    
+    # Add moz.build modification
+    moz_build_path = str(Path(config['file_path']).parent / 'moz.build')
+    patch += f"""
+diff --git a/{moz_build_path} b/{moz_build_path}
+index 0000000000..1111111111 100644
+--- a/{moz_build_path}
++++ b/{moz_build_path}
+@@ -100,3 +100,6 @@
+ FINAL_LIBRARY = "xul"
++
++# Tegufox: Custom patch - {config['patch_name']}
++LOCAL_INCLUDES += ["/camoucfg"]
+"""
+    
+    return patch
+
+
+def generate_patch_pattern_6(config: Dict) -> str:
+    """Generate Pattern 6: Early Return Pattern"""
+    
+    getter = MASKCONFIG_TYPES[config['type']]
+    cpp_type = CPP_TYPES.get(config['type'], config['type'])
+    
+    # Generate patch
+    patch = f"""diff --git a/{config['file_path']} b/{config['file_path']}
+index 0000000000..1111111111 100644
+--- a/{config['file_path']}
++++ b/{config['file_path']}
+@@ -1,6 +1,7 @@
+ #include "{config.get('existing_header', 'mozilla/dom/Something.h')}"
++#include "MaskConfig.hpp"
+ 
+ namespace {config.get('namespace', 'mozilla::dom')} {{
+ 
+@@ -10,6 +11,10 @@ namespace {config.get('namespace', 'mozilla::dom')} {{
+ {cpp_type} {config['class_name']}::{config['method_name']}({config.get('params', '')}) {{
++  // Tegufox: {config['patch_name']} - Early Return Override
++  if (auto value = MaskConfig::{getter}("{config['config_key']}"))
++    return value.value();
++
+   // Original implementation with all existing logic preserved
+   {config.get('original_code', 'return defaultValue;')}
+ }}
+"""
+    
+    # Add moz.build modification
+    moz_build_path = str(Path(config['file_path']).parent / 'moz.build')
+    patch += f"""
+diff --git a/{moz_build_path} b/{moz_build_path}
+index 0000000000..1111111111 100644
+--- a/{moz_build_path}
++++ b/{moz_build_path}
+@@ -100,3 +100,6 @@
+ FINAL_LIBRARY = "xul"
++
++# Tegufox: Custom patch - {config['patch_name']}
++LOCAL_INCLUDES += ["/camoucfg"]
+"""
+    
+    return patch
+
+
+def collect_pattern_1_config() -> Dict:
+    """Collect configuration for Pattern 1"""
+    config = {}
+    
+    print(f"\n{Colors.BOLD}Pattern 1: Simple Value Override{Colors.END}")
+    print_info("This pattern overrides a single API return value with MaskConfig")
+    
+    config['patch_name'] = get_input("Patch name (e.g., mouse-jitter-config)")
+    config['file_path'] = get_input("Target file path (e.g., widget/nsBaseWidget.cpp)")
+    config['class_name'] = get_input("Class name (e.g., nsBaseWidget)")
+    config['method_name'] = get_input("Method name (e.g., GetMouseJitter)")
+    config['return_type'] = get_input("Return type (e.g., double, int32, string)", "double")
+    config['config_key'] = get_input("Config key (e.g., mouse:jitter)")
+    
+    # Validate config key
+    if not validate_config_key(config['config_key']):
+        print_warning(f"Config key '{config['config_key']}' may not follow conventions")
+        print_info("Convention: Use dots (.) for browser APIs, colons (:) for custom features")
+    
+    # Select MaskConfig type
+    config['type'] = select_type("Select config value type")
+    
+    config['params'] = get_input("Method parameters (optional)", "", required=False)
+    config['original_code'] = get_input("Original return statement (optional)", "return 0;", required=False)
+    
+    return config
+
+
+def collect_pattern_2_config() -> Dict:
+    """Collect configuration for Pattern 2"""
+    config = {}
+    
+    print(f"\n{Colors.BOLD}Pattern 2: Conditional Behavior Change{Colors.END}")
+    print_info("This pattern adds a feature flag to change behavior")
+    
+    config['patch_name'] = get_input("Patch name (e.g., disable-tracking)")
+    config['file_path'] = get_input("Target file path")
+    config['class_name'] = get_input("Class name")
+    config['method_name'] = get_input("Method name")
+    config['config_key'] = get_input("Config key (boolean flag, e.g., tracking:disabled)")
+    
+    if not validate_config_key(config['config_key']):
+        print_warning(f"Config key '{config['config_key']}' may not follow conventions")
+    
+    config['custom_behavior'] = get_input("Custom behavior when enabled", "return true;")
+    config['return_type'] = get_input("Return type", "bool")
+    
+    return config
+
+
+def collect_pattern_3_config() -> Dict:
+    """Collect configuration for Pattern 3"""
+    config = {}
+    
+    print(f"\n{Colors.BOLD}Pattern 3: Value with Fallback{Colors.END}")
+    print_info("This pattern uses MaskConfig value with a default fallback")
+    
+    config['patch_name'] = get_input("Patch name (e.g., media-device-count)")
+    config['file_path'] = get_input("Target file path")
+    config['class_name'] = get_input("Class name")
+    config['method_name'] = get_input("Method name")
+    config['variable_name'] = get_input("Variable name (e.g., numMicrophones)")
+    config['config_key'] = get_input("Config key (e.g., mediaDevices:micros)")
+    
+    if not validate_config_key(config['config_key']):
+        print_warning(f"Config key '{config['config_key']}' may not follow conventions")
+    
+    config['type'] = select_type("Select config value type")
+    config['fallback_value'] = get_input("Fallback/default value (e.g., 3)")
+    
+    return config
+
+
+def collect_pattern_4_config() -> Dict:
+    """Collect configuration for Pattern 4"""
+    config = {}
+    
+    print(f"\n{Colors.BOLD}Pattern 4: Complex Structure Override{Colors.END}")
+    print_info("This pattern overrides multiple related values (e.g., rect, viewport)")
+    
+    config['patch_name'] = get_input("Patch name (e.g., screen-dimensions)")
+    config['file_path'] = get_input("Target file path")
+    config['class_name'] = get_input("Class name")
+    config['method_name'] = get_input("Method name")
+    
+    print_info("Enter 4 config keys separated by commas")
+    print_info("Example: screen.left, screen.top, screen.width, screen.height")
+    config['config_keys'] = get_input("Config keys (comma-separated)")
+    
+    # Validate we have 4 keys
+    keys = [k.strip() for k in config['config_keys'].split(',')]
+    if len(keys) != 4:
+        print_error("Pattern 4 requires exactly 4 config keys!")
+        return collect_pattern_4_config()  # Retry
+    
+    # Validate each key
+    for key in keys:
+        if not validate_config_key(key):
+            print_warning(f"Config key '{key}' may not follow conventions")
+    
+    # Select element type
+    print_info("Select the type of values in the structure")
+    config['element_type'] = get_input("Element type (int32, double, uint32)", "int32")
+    
+    config['return_type'] = get_input("Return type (e.g., nsRect, LayoutDeviceIntRect)", "nsRect")
+    config['return_statement'] = get_input(
+        "Return statement (use values[0-3])", 
+        "return nsRect(values[0], values[1], values[2], values[3]);"
+    )
+    
+    return config
+
+
+def collect_pattern_5_config() -> Dict:
+    """Collect configuration for Pattern 5"""
+    config = {}
+    
+    print(f"\n{Colors.BOLD}Pattern 5: Nested Config Access{Colors.END}")
+    print_info("This pattern accesses hierarchical config (e.g., webGl:parameters)")
+    
+    config['patch_name'] = get_input("Patch name (e.g., webgl-parameter)")
+    config['file_path'] = get_input("Target file path")
+    config['class_name'] = get_input("Class name")
+    config['method_name'] = get_input("Method name")
+    
+    print_info("Nested config uses parent:child structure")
+    print_info("Example: parent_key='webGl:parameters', child_key='3379'")
+    config['parent_key'] = get_input("Parent config key (e.g., webGl:parameters)")
+    config['child_key'] = get_input("Child config key (e.g., 3379)")
+    
+    # Validate keys
+    if not validate_config_key(config['parent_key']):
+        print_warning(f"Config key '{config['parent_key']}' may not follow conventions")
+    
+    config['value_type'] = get_input("Return type (e.g., std::string, int32_t)", "std::string")
+    config['json_type'] = get_input("JSON extraction type (e.g., std::string, int)", "std::string")
+    
+    return config
+
+
+def collect_pattern_6_config() -> Dict:
+    """Collect configuration for Pattern 6"""
+    config = {}
+    
+    print(f"\n{Colors.BOLD}Pattern 6: Early Return Pattern{Colors.END}")
+    print_info("This pattern adds early return override, preserving all original logic")
+    
+    config['patch_name'] = get_input("Patch name (e.g., quick-ua-override)")
+    config['file_path'] = get_input("Target file path")
+    config['class_name'] = get_input("Class name")
+    config['method_name'] = get_input("Method name")
+    config['config_key'] = get_input("Config key")
+    
+    if not validate_config_key(config['config_key']):
+        print_warning(f"Config key '{config['config_key']}' may not follow conventions")
+    
+    config['type'] = select_type("Select config value type")
+    config['params'] = get_input("Method parameters (optional)", "", required=False)
+    
+    return config
+
+
+def main():
+    """Main patch generator flow"""
+    
+    print_logo()
+    print_header("PATCH GENERATOR")
+    
+    # Select pattern
+    pattern_num, pattern_info = select_pattern()
+    
+    # Collect configuration based on pattern
+    if pattern_num == "1":
+        config = collect_pattern_1_config()
+        patch_content = generate_patch_pattern_1(config)
+    elif pattern_num == "2":
+        config = collect_pattern_2_config()
+        patch_content = generate_patch_pattern_2(config)
+    elif pattern_num == "3":
+        config = collect_pattern_3_config()
+        patch_content = generate_patch_pattern_3(config)
+    elif pattern_num == "4":
+        config = collect_pattern_4_config()
+        patch_content = generate_patch_pattern_4(config)
+    elif pattern_num == "5":
+        config = collect_pattern_5_config()
+        patch_content = generate_patch_pattern_5(config)
+    elif pattern_num == "6":
+        config = collect_pattern_6_config()
+        patch_content = generate_patch_pattern_6(config)
+    else:
+        print_error(f"Pattern {pattern_num} not implemented")
+        return 1
+    
+    # Show preview
+    print_header("GENERATED PATCH")
+    print(patch_content)
+    
+    # Confirm save
+    print()
+    save = get_input("Save this patch? (y/n)", "y")
+    
+    if save.lower() != 'y':
+        print_warning("Patch not saved")
+        return 0
+    
+    # Create patches directory if needed
+    patches_dir = Path("patches")
+    patches_dir.mkdir(exist_ok=True)
+    
+    # Generate filename
+    filename = f"{config['patch_name']}.patch"
+    filepath = patches_dir / filename
+    
+    # Save patch
+    with open(filepath, 'w') as f:
+        f.write(f"# Tegufox Custom Patch\n")
+        f.write(f"# Generated: {datetime.now().isoformat()}\n")
+        f.write(f"# Pattern: {pattern_info['name']}\n")
+        # Handle both single config_key and multiple config_keys
+        if 'config_key' in config:
+            f.write(f"# Config key: {config['config_key']}\n")
+        elif 'config_keys' in config:
+            f.write(f"# Config keys: {config['config_keys']}\n")
+        f.write(f"#\n")
+        f.write(patch_content)
+    
+    print_success(f"Patch saved to: {filepath}")
+    
+    # Create metadata file
+    metadata_file = patches_dir / f"{config['patch_name']}.json"
+    import json
+    
+    # Prepare metadata
+    metadata = {
+        "name": config['patch_name'],
+        "pattern": pattern_info['name'],
+        "file_path": config['file_path'],
+        "created": datetime.now().isoformat(),
+        "config": config
+    }
+    
+    # Add config key(s) to metadata
+    if 'config_key' in config:
+        metadata['config_key'] = config['config_key']
+    elif 'config_keys' in config:
+        metadata['config_keys'] = config['config_keys']
+    
+    with open(metadata_file, 'w') as f:
+        json.dump(metadata, f, indent=2)
+    
+    print_success(f"Metadata saved to: {metadata_file}")
+    
+    # Next steps
+    print(f"\n{Colors.BOLD}Next steps:{Colors.END}")
+    print(f"1. Review the patch: {Colors.CYAN}cat {filepath}{Colors.END}")
+    print(f"2. Test apply: {Colors.CYAN}cd /path/to/firefox && patch -p1 --dry-run < {filepath.absolute()}{Colors.END}")
+    print(f"3. Apply for real: {Colors.CYAN}patch -p1 < {filepath.absolute()}{Colors.END}")
+    print(f"4. Build Firefox with the patch")
+    
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        print(f"\n\n{Colors.YELLOW}Cancelled by user{Colors.END}")
+        sys.exit(130)
+    except Exception as e:
+        print_error(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)

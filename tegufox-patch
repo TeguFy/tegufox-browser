@@ -1,0 +1,433 @@
+#!/usr/bin/env python3
+"""
+Tegufox Patch Generator CLI
+Creates C++ patch templates for Camoufox with MaskConfig integration
+"""
+
+import argparse
+import os
+import sys
+from pathlib import Path
+from datetime import datetime
+
+
+PATCH_TYPES = {
+    'fingerprint': {
+        'desc': 'Fingerprinting protection patch',
+        'example_files': [
+            'dom/base/nsGlobalWindowInner.cpp',
+            'dom/canvas/CanvasRenderingContext2D.cpp'
+        ]
+    },
+    'behavior': {
+        'desc': 'Behavioral simulation patch',
+        'example_files': [
+            'dom/events/EventStateManager.cpp',
+            'widget/nsBaseWidget.cpp'
+        ]
+    },
+    'network': {
+        'desc': 'Network/protocol level patch',
+        'example_files': [
+            'netwerk/protocol/http/nsHttpChannel.cpp',
+            'security/manager/ssl/nsNSSIOLayer.cpp'
+        ]
+    },
+    'webgl': {
+        'desc': 'WebGL spoofing patch',
+        'example_files': [
+            'dom/canvas/WebGLContext.cpp',
+            'dom/canvas/WebGLContextGL.cpp'
+        ]
+    }
+}
+
+
+def create_patch_template(name, patch_type, target_file, description):
+    """Generate patch template with MaskConfig integration"""
+    
+    template = f'''diff --git a/{target_file} b/{target_file}
+index xxxxxxxxxx..yyyyyyyyyy 100644
+--- a/{target_file}
++++ b/{target_file}
+@@ -1,6 +1,7 @@
+ /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+ /* vim: set ts=8 sts=2 et sw=2 tw=80: */
+ /* This Source Code Form is subject to the terms of the Mozilla Public
+  * License, v. 2.0. If a copy of the MPL was not distributed with this
+  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ 
++#include "MaskConfig.hpp"
+ 
+ // TODO: Add your patch implementation here
+ // Example MaskConfig usage:
+ //
+ // if (auto value = MaskConfig::GetDouble("{name}:parameter"))
+ //     return value.value();
+ //
+ // Available MaskConfig functions:
+ // - GetString(key) -> std::optional<std::string>
+ // - GetDouble(key) -> std::optional<double>
+ // - GetUint32(key) -> std::optional<uint32_t>
+ // - GetInt32(key) -> std::optional<int32_t>
+ // - GetBool(key) -> std::optional<bool>
+ // - CheckBool(key) -> bool (default false)
+'''
+
+    # Add moz.build modification
+    mozbuild_file = str(Path(target_file).parent / 'moz.build')
+    mozbuild_patch = f'''
+diff --git a/{mozbuild_file} b/{mozbuild_file}
+index xxxxxxxxxx..yyyyyyyyyy 100644
+--- a/{mozbuild_file}
++++ b/{mozbuild_file}
+@@ -1,3 +1,6 @@
++# Tegufox patch: {name}
++LOCAL_INCLUDES += ["/camoucfg"]
++
+ # -*- Mode: python; indent-tabs-mode: nil; tab-width: 40 -*-
+ # vim: set filetype=python:
+'''
+    
+    full_patch = template + mozbuild_patch
+    
+    return full_patch
+
+
+def create_patch_metadata(name, patch_type, target_file, description):
+    """Create metadata file for patch"""
+    
+    metadata = f'''# Tegufox Patch: {name}
+
+**Type**: {patch_type}  
+**Created**: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}  
+**Target File**: {target_file}
+
+## Description
+
+{description}
+
+## MaskConfig Keys
+
+Document the configuration keys this patch uses:
+
+```json
+{{
+  "{name}:parameter1": "description",
+  "{name}:parameter2": "description"
+}}
+```
+
+## Example Configuration
+
+```json
+{{
+  "{name}:parameter1": 42,
+  "{name}:parameter2": "value"
+}}
+```
+
+## Testing
+
+1. Apply patch:
+   ```bash
+   cd /path/to/camoufox-source
+   git apply ../tegufox-browser/patches/{name}.patch
+   ```
+
+2. Build Camoufox:
+   ```bash
+   ./mach build
+   ```
+
+3. Test with configuration:
+   ```python
+   from camoufox import Camoufox
+   
+   config = {{
+       "{name}:parameter1": 42
+   }}
+   
+   with Camoufox(config=config) as browser:
+       # Test your patch
+       pass
+   ```
+
+## Implementation Checklist
+
+- [ ] Patch created and applied
+- [ ] MaskConfig integration added
+- [ ] Configuration keys documented
+- [ ] Test script written
+- [ ] Baseline metrics collected
+- [ ] Patch tested in isolation
+- [ ] Documentation updated
+
+## Notes
+
+Add any implementation notes, gotchas, or future improvements here.
+'''
+    
+    return metadata
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Tegufox Patch Generator - Create C++ patches with MaskConfig integration',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+Examples:
+  # Create fingerprinting patch
+  %(prog)s create --name canvas-v2 --type fingerprint \\
+      --file dom/canvas/CanvasRenderingContext2D.cpp \\
+      --desc "Enhanced canvas fingerprint protection"
+  
+  # Create behavioral patch
+  %(prog)s create --name mouse-neuromotor --type behavior \\
+      --file dom/events/EventStateManager.cpp \\
+      --desc "Neuromotor mouse movement simulation"
+
+Available patch types:
+''' + '\n'.join(f"  {k}: {v['desc']}" for k, v in PATCH_TYPES.items())
+    )
+    
+    subparsers = parser.add_subparsers(dest='command', help='Commands')
+    
+    # Create command
+    create_parser = subparsers.add_parser('create', help='Create new patch template')
+    create_parser.add_argument('--name', required=True, help='Patch name (e.g., canvas-v2)')
+    create_parser.add_argument('--type', required=True, choices=PATCH_TYPES.keys(),
+                              help='Patch type')
+    create_parser.add_argument('--file', required=True, help='Target Firefox source file')
+    create_parser.add_argument('--desc', required=True, help='Patch description')
+    create_parser.add_argument('--output-dir', default='patches',
+                              help='Output directory (default: patches/)')
+    
+    # List command
+    list_parser = subparsers.add_parser('list', help='List available patch types')
+    
+    # Validate command
+    validate_parser = subparsers.add_parser('validate', help='Validate patch syntax')
+    validate_parser.add_argument('patch_file', help='Patch file to validate')
+    
+    args = parser.parse_args()
+    
+    if args.command == 'create':
+        create_patch(args)
+    elif args.command == 'list':
+        list_types()
+    elif args.command == 'validate':
+        validate_patch(args)
+    else:
+        parser.print_help()
+
+
+def create_patch(args):
+    """Create patch files"""
+    
+    print(f"🦊 Tegufox Patch Generator")
+    print(f"={'='*60}")
+    print(f"Creating patch: {args.name}")
+    print(f"Type: {args.type} - {PATCH_TYPES[args.type]['desc']}")
+    print(f"Target file: {args.file}")
+    print(f"{'='*60}\n")
+    
+    # Create output directory
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Generate patch file
+    patch_content = create_patch_template(args.name, args.type, args.file, args.desc)
+    patch_file = output_dir / f"{args.name}.patch"
+    
+    with open(patch_file, 'w') as f:
+        f.write(patch_content)
+    
+    print(f"✅ Created patch file: {patch_file}")
+    
+    # Generate metadata file
+    metadata_content = create_patch_metadata(args.name, args.type, args.file, args.desc)
+    metadata_file = output_dir / f"{args.name}.md"
+    
+    with open(metadata_file, 'w') as f:
+        f.write(metadata_content)
+    
+    print(f"✅ Created metadata file: {metadata_file}")
+    
+    # Generate test stub
+    test_content = create_test_stub(args.name, args.type)
+    test_dir = Path('tests') / args.type
+    test_dir.mkdir(parents=True, exist_ok=True)
+    test_file = test_dir / f"test_{args.name.replace('-', '_')}.py"
+    
+    with open(test_file, 'w') as f:
+        f.write(test_content)
+    
+    print(f"✅ Created test file: {test_file}")
+    
+    print(f"\n📝 Next steps:")
+    print(f"1. Edit {patch_file} to implement your patch")
+    print(f"2. Update {metadata_file} with MaskConfig keys")
+    print(f"3. Implement test in {test_file}")
+    print(f"4. Apply patch: cd camoufox-source && git apply ../{patch_file}")
+    print(f"5. Build: cd camoufox-source && ./mach build")
+    print(f"6. Test: python {test_file}")
+
+
+def create_test_stub(name, patch_type):
+    """Create test stub for patch"""
+    
+    test_name = name.replace('-', '_')
+    
+    return f'''#!/usr/bin/env python3
+"""
+Test for Tegufox patch: {name}
+Type: {patch_type}
+"""
+
+from camoufox import Camoufox
+import json
+
+
+def test_{test_name}_basic():
+    """Test basic functionality"""
+    
+    config = {{
+        "{name}:parameter1": 42,
+        # Add more config keys as needed
+    }}
+    
+    print(f"🧪 Testing {name} patch")
+    print(f"Config: {{json.dumps(config, indent=2)}}")
+    
+    with Camoufox(config=config, headless=False) as browser:
+        page = browser.new_page()
+        page.goto("about:blank")
+        
+        # TODO: Add your test logic here
+        # Example: Check if spoofed value is applied
+        result = page.evaluate("""() => {{
+            // JavaScript to test patch behavior
+            return {{
+                // Return test results
+            }};
+        }}""")
+        
+        print(f"Result: {{json.dumps(result, indent=2)}}")
+        
+        # TODO: Add assertions
+        # assert result['someValue'] == expected_value
+        
+        page.close()
+    
+    print("✅ Test passed")
+
+
+def test_{test_name}_consistency():
+    """Test consistency across page loads"""
+    
+    config = {{
+        "{name}:parameter1": 42,
+    }}
+    
+    print(f"🧪 Testing {name} consistency")
+    
+    with Camoufox(config=config) as browser:
+        results = []
+        
+        for i in range(5):
+            page = browser.new_page()
+            page.goto("about:blank")
+            
+            result = page.evaluate("""() => {{
+                // Get value that should be consistent
+                return {{}};
+            }}""")
+            
+            results.append(result)
+            page.close()
+        
+        # All results should be identical
+        assert all(r == results[0] for r in results), "Values not consistent!"
+        
+        print(f"✅ Consistency test passed (5/5 identical)")
+
+
+def test_{test_name}_fallback():
+    """Test fallback behavior when config not provided"""
+    
+    print(f"🧪 Testing {name} fallback")
+    
+    # No config provided
+    with Camoufox(headless=False) as browser:
+        page = browser.new_page()
+        page.goto("about:blank")
+        
+        # TODO: Test that patch falls back correctly
+        
+        page.close()
+    
+    print("✅ Fallback test passed")
+
+
+if __name__ == "__main__":
+    test_{test_name}_basic()
+    test_{test_name}_consistency()
+    test_{test_name}_fallback()
+    print(f"\\n✅ All tests passed for {name}")
+'''
+
+
+def list_types():
+    """List available patch types"""
+    
+    print("🦊 Tegufox Patch Types\n")
+    
+    for patch_type, info in PATCH_TYPES.items():
+        print(f"📦 {patch_type}")
+        print(f"   Description: {info['desc']}")
+        print(f"   Example files:")
+        for file in info['example_files']:
+            print(f"      - {file}")
+        print()
+
+
+def validate_patch(args):
+    """Validate patch syntax"""
+    
+    patch_file = Path(args.patch_file)
+    
+    if not patch_file.exists():
+        print(f"❌ Patch file not found: {patch_file}")
+        sys.exit(1)
+    
+    print(f"🔍 Validating patch: {patch_file}")
+    
+    with open(patch_file) as f:
+        content = f.read()
+    
+    # Basic validation
+    checks = [
+        ('Has diff header', content.startswith('diff --git')),
+        ('Has file paths', '---' in content and '+++' in content),
+        ('Has change markers', '@@' in content),
+        ('Has MaskConfig include', '#include "MaskConfig.hpp"' in content),
+        ('Has moz.build modification', 'LOCAL_INCLUDES += ["/camoucfg"]' in content),
+    ]
+    
+    all_passed = True
+    for check_name, passed in checks:
+        status = "✅" if passed else "❌"
+        print(f"{status} {check_name}")
+        if not passed:
+            all_passed = False
+    
+    if all_passed:
+        print(f"\n✅ Patch validation passed")
+    else:
+        print(f"\n❌ Patch validation failed")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

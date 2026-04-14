@@ -1,0 +1,117 @@
+{
+  "timestamp": "2026-04-13 01:29:59",
+  "tests": [
+    {
+      "name": "Navigator Properties",
+      "status": "pass",
+      "data": {
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:135.0) Gecko/20100101 Firefox/135.0",
+        "platform": "MacIntel",
+        "language": "en-US",
+        "hardwareConcurrency": 10,
+        "deviceMemory": "undefined",
+        "webdriver": false,
+        "maxTouchPoints": 0,
+        "vendor": "",
+        "doNotTrack": "1",
+        "cookieEnabled": true
+      }
+    },
+    {
+      "name": "Screen Properties",
+      "status": "pass",
+      "data": {
+        "width": 1470,
+        "height": 956,
+        "availWidth": 1470,
+        "availHeight": 849,
+        "colorDepth": 30,
+        "pixelDepth": 30,
+        "innerWidth": 1470,
+        "innerHeight": 789,
+        "outerWidth": 1470,
+        "outerHeight": 849,
+        "devicePixelRatio": 1
+      }
+    },
+    {
+      "name": "WebGL Information",
+      "status": "pass",
+      "data": {
+        "vendor": "Apple",
+        "renderer": "Apple M1, or similar",
+        "version": "WebGL 1.0",
+        "shadingLanguageVersion": "WebGL GLSL ES 1.0",
+        "maxTextureSize": 8192,
+        "maxViewportDims": "16384,16384"
+      }
+    },
+    {
+      "name": "Canvas Fingerprint",
+      "status": "pass",
+      "data": {
+        "dataURL": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAAAyCAYAAAAZUZThAAARoklEQVR4Xu1cCXhN1xpdmUkkkhgSY2...",
+        "length": 6118,
+        "hash": -1233233712
+      }
+    },
+    {
+      "name": "Audio Context",
+      "status": "pass",
+      "data": {
+        "sampleRate": 48000,
+        "state": "suspended",
+        "maxChannelCount": 2,
+        "numberOfInputs": 1,
+        "numberOfOutputs": 0,
+        "channelCount": 2
+      }
+    },
+    {
+      "name": "Font Detection",
+      "status": "pass",
+      "data": {
+        "detectedFonts": [
+          "Arial",
+          "Courier New",
+          "Georgia",
+          "Times New Roman",
+          "Verdana",
+          "Comic Sans MS",
+          "Trebuchet MS"
+        ],
+        "count": 7
+      }
+    },
+    {
+      "name": "Plugins & MIME Types",
+      "status": "pass",
+      "data": {
+        "pluginsLength": 5,
+        "mimeTypesLength": 2,
+        "plugins": [
+          {
+            "name": "PDF Viewer",
+            "description": "Portable Document Format"
+          },
+          {
+            "name": "Chrome PDF Viewer",
+            "description": "Portable Document Format"
+          },
+          {
+            "name": "Chromium PDF Viewer",
+            "description": "Portable Document Format"
+          },
+          {
+            "name": "Microsoft Edge PDF Viewer",
+            "description": "Portable Document Format"
+          },
+          {
+            "name": "WebKit built-in PDF",
+            "description": "Portable Document Format"
+          }
+        ]
+      }
+    }
+  ]
+}

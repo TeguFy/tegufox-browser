@@ -1,0 +1,193 @@
+{
+  "name": "chrome-120-windows",
+  "description": "Chrome 120 on Windows 11 - Complete TLS + HTTP/2 fingerprint",
+  "created": "2026-04-13",
+  "version": "1.0",
+  
+  "screen": {
+    "width": 1920,
+    "height": 1080,
+    "availWidth": 1920,
+    "availHeight": 1040,
+    "colorDepth": 24,
+    "pixelDepth": 24
+  },
+  
+  "navigator": {
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "platform": "Win32",
+    "hardwareConcurrency": 8,
+    "deviceMemory": 8,
+    "maxTouchPoints": 0,
+    "vendor": "Google Inc.",
+    "language": "en-US",
+    "languages": ["en-US", "en"]
+  },
+  
+  "tls": {
+    "version": "1.3",
+    "cipher_suites": [
+      "TLS_AES_128_GCM_SHA256",
+      "TLS_AES_256_GCM_SHA384",
+      "TLS_CHACHA20_POLY1305_SHA256",
+      "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+      "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+      "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
+      "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
+      "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256",
+      "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256",
+      "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA",
+      "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA",
+      "TLS_RSA_WITH_AES_128_GCM_SHA256",
+      "TLS_RSA_WITH_AES_256_GCM_SHA384",
+      "TLS_RSA_WITH_AES_128_CBC_SHA",
+      "TLS_RSA_WITH_AES_256_CBC_SHA"
+    ],
+    "extensions": {
+      "sni": true,
+      "alpn": ["h2", "http/1.1"],
+      "supported_groups": ["x25519", "secp256r1", "secp384r1"],
+      "signature_algorithms": [
+        "ecdsa_secp256r1_sha256",
+        "rsa_pss_rsae_sha256",
+        "rsa_pkcs1_sha256",
+        "ecdsa_secp384r1_sha384",
+        "rsa_pss_rsae_sha384",
+        "rsa_pkcs1_sha384",
+        "rsa_pss_rsae_sha512",
+        "rsa_pkcs1_sha512"
+      ],
+      "compress_certificate": ["brotli"]
+    }
+  },
+  
+  "http2": {
+    "settings": {
+      "header_table_size": 65536,
+      "enable_push": 0,
+      "max_concurrent_streams": 1000,
+      "initial_window_size": 6291456,
+      "max_frame_size": 16384,
+      "max_header_list_size": 262144
+    },
+    "window_update": 15663105,
+    "priority_frames": false,
+    "pseudo_header_order": ["method", "authority", "scheme", "path"]
+  },
+  
+  "webgl": {
+    "vendor": "Google Inc. (Intel)",
+    "renderer": "ANGLE (Intel, Intel(R) UHD Graphics 630 (0x00003E9B) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "extensions": [
+      "ANGLE_instanced_arrays",
+      "EXT_blend_minmax",
+      "EXT_color_buffer_half_float",
+      "EXT_disjoint_timer_query",
+      "EXT_float_blend",
+      "EXT_frag_depth",
+      "EXT_shader_texture_lod",
+      "EXT_texture_compression_bptc",
+      "EXT_texture_compression_rgtc",
+      "EXT_texture_filter_anisotropic",
+      "EXT_sRGB",
+      "KHR_parallel_shader_compile",
+      "OES_element_index_uint",
+      "OES_fbo_render_mipmap",
+      "OES_standard_derivatives",
+      "OES_texture_float",
+      "OES_texture_float_linear",
+      "OES_texture_half_float",
+      "OES_texture_half_float_linear",
+      "OES_vertex_array_object",
+      "WEBGL_color_buffer_float",
+      "WEBGL_compressed_texture_s3tc",
+      "WEBGL_compressed_texture_s3tc_srgb",
+      "WEBGL_debug_renderer_info",
+      "WEBGL_debug_shaders",
+      "WEBGL_depth_texture",
+      "WEBGL_draw_buffers",
+      "WEBGL_lose_context",
+      "WEBGL_multi_draw"
+    ],
+    "parameters": {
+      "MAX_TEXTURE_SIZE": 16384,
+      "MAX_VERTEX_ATTRIBS": 16,
+      "MAX_VIEWPORT_DIMS": [32767, 32767],
+      "MAX_CUBE_MAP_TEXTURE_SIZE": 16384,
+      "MAX_RENDERBUFFER_SIZE": 16384,
+      "MAX_COMBINED_TEXTURE_IMAGE_UNITS": 32,
+      "MAX_VERTEX_TEXTURE_IMAGE_UNITS": 16,
+      "MAX_TEXTURE_IMAGE_UNITS": 16,
+      "MAX_FRAGMENT_UNIFORM_VECTORS": 1024,
+      "MAX_VERTEX_UNIFORM_VECTORS": 4096,
+      "SHADING_LANGUAGE_VERSION": "WebGL GLSL ES 1.0 (OpenGL ES GLSL ES 1.0 Chromium)",
+      "VERSION": "WebGL 1.0 (OpenGL ES 2.0 Chromium)"
+    }
+  },
+  
+  "canvas": {
+    "noise": {
+      "seed": "chrome-120-session-001",
+      "intensity": 0.02,
+      "magnitude": 2,
+      "edge_bias": 1.5,
+      "strategy": "gpu",
+      "temporal_variation": 0.001,
+      "sparse_probability": 0.03
+    }
+  },
+  
+  "dns_config": {
+    "enabled": true,
+    "provider": "cloudflare",
+    "rationale": "Chrome default DoH is Cloudflare (chrome://settings/security)",
+    "doh": {
+      "uri": "https://mozilla.cloudflare-dns.com/dns-query",
+      "bootstrap_address": "1.1.1.1",
+      "mode": 3,
+      "strict_fallback": true,
+      "disable_ecs": true
+    },
+    "ipv6": {
+      "enabled": false,
+      "reason": "Prevent IPv6 leaks (most VPNs IPv4-only)"
+    },
+    "webrtc": {
+      "enabled": false,
+      "reason": "Prevent WebRTC IP leaks"
+    },
+    "prefetch": {
+      "dns_prefetch": false,
+      "link_prefetch": false,
+      "reason": "Prevent speculative DNS queries"
+    }
+  },
+  
+  "firefox_preferences": {
+    "network.trr.mode": 3,
+    "network.trr.uri": "https://mozilla.cloudflare-dns.com/dns-query",
+    "network.trr.bootstrapAddress": "1.1.1.1",
+    "network.trr.strict_native_fallback": true,
+    "network.trr.max_fails": 5,
+    "network.trr.request_timeout_ms": 3000,
+    "network.trr.disable-ECS": true,
+    "network.trr.early-AAAA": false,
+    "network.dns.disableIPv6": true,
+    "media.peerconnection.enabled": false,
+    "media.navigator.enabled": false,
+    "media.getusermedia.screensharing.enabled": false,
+    "media.peerconnection.ice.default_address_only": true,
+    "media.peerconnection.ice.no_host": true,
+    "media.peerconnection.ice.obfuscate_host_addresses": true,
+    "network.dns.disablePrefetch": true,
+    "network.prefetch-next": false,
+    "network.http.speculative-parallel-limit": 0
+  },
+  
+  "fingerprints": {
+    "ja3": "579ccef312d18482fc42e2b822ca2430",
+    "ja4": "t13d1516h2_8daaf6152771_e5627906d626",
+    "akamai_http2": "1:65536;2:0;3:1000;4:6291456;5:16384;6:262144|15663105|0|m,a,s,p",
+    "notes": "Chrome 120 uses BoringSSL. JA3/JA4/HTTP2 must all match for consistency. DoH uses Cloudflare to match Chrome default."
+  }
+}

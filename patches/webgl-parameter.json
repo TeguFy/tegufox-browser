@@ -1,0 +1,16 @@
+{
+  "name": "webgl-parameter",
+  "pattern": "Nested Config Access",
+  "file_path": "dom/canvas/WebGLContext.cpp",
+  "created": "2026-04-13T13:25:48.061594",
+  "config": {
+    "patch_name": "webgl-parameter",
+    "file_path": "dom/canvas/WebGLContext.cpp",
+    "class_name": "WebGLContext",
+    "method_name": "GetParameter",
+    "parent_key": "webGl:parameters",
+    "child_key": "3379",
+    "value_type": "std::string",
+    "json_type": "std::string"
+  }
+}

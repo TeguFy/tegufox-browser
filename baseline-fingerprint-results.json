@@ -1,0 +1,24 @@
+{
+  "CreepJS": {
+    "trustScore": "FP ID: eeb26e7aa8fd2de30e9ecc8b043dfb7fc67eb9bc0bfa8d2d352ae1be376fc829",
+    "hasFingerprint": true,
+    "pageTitle": "CreepJS"
+  },
+  "BrowserLeaks - Canvas": {
+    "pageTitle": "Canvas Fingerprinting - BrowserLeaks",
+    "canvasSupported": false,
+    "pageLoaded": "complete"
+  },
+  "Navigator Properties": {
+    "webdriver": false,
+    "platform": "MacIntel",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:135.0) Gecko/20100101 Firefox/135.0",
+    "languages": [
+      "en-US",
+      "en"
+    ],
+    "hardwareConcurrency": 10,
+    "deviceMemory": "undefined",
+    "pageTitle": "JavaScript Browser Information - BrowserLeaks"
+  }
+}

@@ -1,0 +1,40 @@
+# Tegufox Custom Patch
+# Generated: 2026-04-13T13:20:53.547154
+# Pattern: Complex Structure Override
+# Config keys: screen.left, screen.top, screen.width, screen.height
+#
+diff --git a/widget/nsBaseScreen.cpp b/widget/nsBaseScreen.cpp
+index 0000000000..1111111111 100644
+--- a/widget/nsBaseScreen.cpp
++++ b/widget/nsBaseScreen.cpp
+@@ -1,6 +1,7 @@
+ #include "mozilla/dom/Something.h"
++#include "MaskConfig.hpp"
+ 
+ namespace mozilla::dom {
+ 
+@@ -10,6 +11,15 @@ namespace mozilla::dom {
+ nsRect nsBaseScreen::GetRect() {
++  // Tegufox: screen-dimensions - Complex Structure Override
++  if (auto conf = MaskConfig::GetInt32Rect(
++          "screen.left", 
++          "screen.top",
++          "screen.width", 
++          "screen.height")) {
++    auto values = conf.value();
++    return nsRect(values[0], values[1], values[2], values[3]);
++  }
++
+   // Original implementation
+   return nsRect();
+ }
+
+diff --git a/widget/moz.build b/widget/moz.build
+index 0000000000..1111111111 100644
+--- a/widget/moz.build
++++ b/widget/moz.build
+@@ -100,3 +100,6 @@
+ FINAL_LIBRARY = "xul"
++
++# Tegufox: Custom patch - screen-dimensions
++LOCAL_INCLUDES += ["/camoucfg"]

@@ -1,0 +1,227 @@
+#!/usr/bin/env python3
+"""
+Tegufox Profile Launcher - Correct viewport handling
+Launch Camoufox browser with profile using proper screen/viewport configuration
+"""
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+try:
+    from camoufox.sync_api import Camoufox
+    from browserforge.fingerprints import Screen
+except ImportError:
+    print("❌ Error: Camoufox not installed")
+    print("Install with: pip install camoufox")
+    sys.exit(1)
+
+
+def profile_to_screen_constraint(profile, viewport_padding=16):
+    """
+    Convert profile screen dimensions to Screen constraint
+    
+    Args:
+        profile: Profile dictionary
+        viewport_padding: Extra pixels Camoufox adds to viewport (default: 16)
+                         Screen will be enlarged to accommodate this
+    """
+    config = profile.get('config', {})
+    target_width = config.get('screen.width', 1920)
+    target_height = config.get('screen.height', 1080)
+    
+    # Enlarge screen to accommodate Camoufox's viewport padding
+    # This ensures window.innerWidth <= screen.width
+    actual_width = target_width + viewport_padding
+    actual_height = target_height
+    
+    return Screen(
+        min_width=actual_width,
+        max_width=actual_width,
+        min_height=actual_height,
+        max_height=actual_height
+    ), target_width, target_height  # Return both actual and target dimensions
+
+
+def profile_to_viewport_size(profile, chrome_height=70):
+    """
+    Calculate viewport size from profile screen dimensions
+    
+    Args:
+        profile: Profile dictionary
+        chrome_height: Browser chrome height in pixels (default: 70 for Firefox)
+    
+    Note: Camoufox may add ~16px to the viewport width internally.
+          We account for this by enlarging the screen in profile_to_screen_constraint()
+    """
+    config = profile.get('config', {})
+    width = config.get('screen.width', 1920)
+    height = config.get('screen.height', 1080)
+    
+    return {
+        'width': width,  # Use target width (Camoufox will add padding)
+        'height': height - chrome_height
+    }
+
+
+def profile_to_os(profile):
+    """Extract OS from profile platform"""
+    config = profile.get('config', {})
+    platform = config.get('navigator.platform', 'Win32')
+    
+    if 'Win' in platform:
+        return 'windows'
+    elif 'Mac' in platform:
+        return 'macos'
+    elif 'Linux' in platform:
+        return 'linux'
+    else:
+        return 'windows'  # default
+
+
+def clean_config_for_camoufox(config):
+    """Remove keys that Camoufox auto-generates"""
+    # Keys that Camoufox will warn about or ignore
+    auto_generated_keys = [
+        'screen.width', 
+        'screen.height',
+        'screen.colorDepth',
+        'navigator.platform',
+        'navigator.userAgent',
+        'navigator.hardwareConcurrency',
+        'webGl:vendor',      # Camoufox auto-generates WebGL based on OS
+        'webGl:renderer'     # Let Camoufox handle WebGL fingerprinting
+    ]
+    
+    return {k: v for k, v in config.items() if k not in auto_generated_keys}
+
+
+def launch_profile(profile_file, url=None, headless=False, verify_viewport=False):
+    """Launch browser with profile using correct viewport configuration"""
+    
+    # Load profile
+    profile_path = Path(profile_file)
+    if not profile_path.exists():
+        print(f"❌ Profile not found: {profile_file}")
+        sys.exit(1)
+    
+    with open(profile_path) as f:
+        profile = json.load(f)
+    
+    # Extract configuration
+    config = profile.get('config', {})
+    screen_constraint, target_width, target_height = profile_to_screen_constraint(profile)
+    viewport_size = profile_to_viewport_size(profile)
+    os_name = profile_to_os(profile)
+    
+    # Clean config (remove auto-generated keys)
+    clean_config = clean_config_for_camoufox(config)
+    
+    print("🦊 Tegufox Profile Launcher\n")
+    print(f"📦 Profile: {profile.get('name', profile_path.stem)}")
+    print(f"📝 Platform: {profile.get('platform', 'unknown')}")
+    print(f"🖥️  OS: {os_name}")
+    print(f"📐 Target Screen: {target_width}x{target_height}")
+    print(f"📐 Actual Screen: ~{target_width + 16}x{target_height} (accounts for Camoufox padding)")
+    print(f"🪟 Viewport: {viewport_size['width']}x{viewport_size['height']}")
+    print(f"🔧 Config keys: {len(clean_config)}")
+    print()
+    
+    # Launch browser
+    print("🚀 Launching browser...")
+    
+    try:
+        with Camoufox(
+            os=os_name,
+            screen=screen_constraint,
+            config=clean_config,
+            headless=headless,
+            i_know_what_im_doing=True  # Suppress remaining warnings
+        ) as browser:
+            # Create context with viewport (instead of using page.set_viewport_size)
+            context = browser.new_context(viewport=viewport_size)
+            page = context.new_page()
+            
+            if verify_viewport:
+                # Test viewport consistency
+                print("🔍 Verifying viewport consistency...")
+                
+                page.goto('data:text/html,<html><body><h1>Viewport Test</h1></body></html>')
+                
+                dims = page.evaluate('''() => ({
+                    screen_width: screen.width,
+                    screen_height: screen.height,
+                    window_innerWidth: window.innerWidth,
+                    window_innerHeight: window.innerHeight,
+                    window_outerWidth: window.outerWidth,
+                    window_outerHeight: window.outerHeight,
+                    ratio: window.innerWidth / screen.width
+                })''')
+                
+                print(f"   Screen: {dims['screen_width']}x{dims['screen_height']}")
+                print(f"   Viewport: {dims['window_innerWidth']}x{dims['window_innerHeight']}")
+                print(f"   Ratio: {dims['ratio']:.1%}")
+                
+                # Check consistency
+                if dims['window_innerWidth'] > dims['screen_width']:
+                    print("   ❌ CRITICAL: viewport > screen (IMPOSSIBLE)")
+                elif dims['ratio'] >= 0.95:
+                    print("   ✅ Viewport fills screen (good)")
+                else:
+                    print(f"   ⚠️  Viewport is {dims['ratio']:.0%} of screen")
+                print()
+            
+            # Navigate to URL
+            target_url = url or 'https://browserleaks.com/screen'
+            print(f"🌐 Navigating to: {target_url}")
+            page.goto(target_url)
+            
+            print("✅ Browser launched successfully!")
+            print("💡 Press Ctrl+C to close browser...\n")
+            
+            # Keep browser open
+            import time
+            try:
+                while True:
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                print("\n👋 Closing browser...")
+    
+    except Exception as e:
+        print(f"\n❌ Error launching browser: {e}")
+        sys.exit(1)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Launch Camoufox browser with Tegufox profile (correct viewport handling)',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+Examples:
+  # Launch with profile (default: browserleaks.com/screen)
+  %(prog)s profiles/my-ebay-account.json
+  
+  # Launch with custom URL
+  %(prog)s profiles/my-ebay-account.json --url https://ebay.com
+  
+  # Verify viewport consistency
+  %(prog)s profiles/my-ebay-account.json --verify
+  
+  # Run in headless mode
+  %(prog)s profiles/my-ebay-account.json --headless
+'''
+    )
+    
+    parser.add_argument('profile', help='Profile JSON file')
+    parser.add_argument('--url', help='URL to navigate to (default: browserleaks.com/screen)')
+    parser.add_argument('--headless', action='store_true', help='Run in headless mode')
+    parser.add_argument('--verify', action='store_true', help='Verify viewport consistency')
+    
+    args = parser.parse_args()
+    
+    launch_profile(args.profile, url=args.url, headless=args.headless, verify_viewport=args.verify)
+
+
+if __name__ == "__main__":
+    main()

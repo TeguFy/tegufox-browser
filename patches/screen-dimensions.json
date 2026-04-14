@@ -1,0 +1,17 @@
+{
+  "name": "screen-dimensions",
+  "pattern": "Complex Structure Override",
+  "file_path": "widget/nsBaseScreen.cpp",
+  "created": "2026-04-13T13:20:53.549736",
+  "config": {
+    "patch_name": "screen-dimensions",
+    "file_path": "widget/nsBaseScreen.cpp",
+    "class_name": "nsBaseScreen",
+    "method_name": "GetRect",
+    "config_keys": "screen.left, screen.top, screen.width, screen.height",
+    "element_type": "int32",
+    "return_type": "nsRect",
+    "return_statement": "return nsRect(values[0], values[1], values[2], values[3]);"
+  },
+  "config_keys": "screen.left, screen.top, screen.width, screen.height"
+}

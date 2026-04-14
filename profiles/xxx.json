@@ -1,0 +1,24 @@
+{
+  "name": "xxx",
+  "platform": "ebay-seller",
+  "created": "2026-04-13T01:58:21.894523",
+  "description": "eBay seller profile optimized for account longevity",
+  "config": {
+    "navigator:userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Gecko/20100101 Firefox/135.0",
+    "navigator:platform": "Win32",
+    "navigator:hardwareConcurrency": 8,
+    "screen:width": 1920,
+    "screen:height": 1080,
+    "screen:colorDepth": 24,
+    "AudioContext:sampleRate": 48000,
+    "AudioContext:maxChannelCount": 2,
+    "canvas:seed": 36282375,
+    "canvas:noise": 0.02,
+    "webGl:vendor": "Google Inc. (NVIDIA)",
+    "webGl:renderer": "ANGLE (NVIDIA, GeForce RTX 3060)"
+  },
+  "metadata": {
+    "version": "1.0",
+    "tegufox_version": "0.1.0"
+  }
+}

@@ -1,0 +1,33 @@
+# Tegufox Custom Patch
+# Generated: 2026-04-13T13:05:56.661457
+# Pattern: Simple Value Override
+# Config key: mouse:jitter:intensity
+#
+diff --git a/widget/nsBaseWidget.cpp b/widget/nsBaseWidget.cpp
+index 0000000000..1111111111 100644
+--- a/widget/nsBaseWidget.cpp
++++ b/widget/nsBaseWidget.cpp
+@@ -1,6 +1,7 @@
+ #include "mozilla/dom/Something.h"
++#include "MaskConfig.hpp"
+ 
+ namespace mozilla::dom {
+ 
+@@ -10,6 +11,8 @@ namespace mozilla::dom {
+ double nsBaseWidget::GetMouseJitterIntensity() {
++  if (auto value = MaskConfig::GetDouble("mouse:jitter:intensity"))
++    return value.value();
++
+   // Original implementation
+   return 0.0;
+ }
+
+diff --git a/widget/moz.build b/widget/moz.build
+index 0000000000..1111111111 100644
+--- a/widget/moz.build
++++ b/widget/moz.build
+@@ -100,3 +100,6 @@
+ FINAL_LIBRARY = "xul"
++
++# Tegufox: Custom patch - mouse-jitter-intensity
++LOCAL_INCLUDES += ["/camoucfg"]

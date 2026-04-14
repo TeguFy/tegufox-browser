@@ -1,0 +1,21 @@
+{
+  "name": "etsy-shop-1",
+  "platform": "etsy-shop",
+  "created": "2026-04-13T01:42:35.773248",
+  "description": "Etsy shop owner profile",
+  "config": {
+    "navigator:userAgent": "Mozilla/5.0 (Windows NT 11.0; Win64; x64) Gecko/20100101 Firefox/135.0",
+    "navigator:platform": "Win32",
+    "navigator:hardwareConcurrency": 12,
+    "screen:width": 2560,
+    "screen:height": 1440,
+    "screen:colorDepth": 24,
+    "AudioContext:sampleRate": 44100,
+    "canvas:seed": 3510046480,
+    "canvas:noise": 0.025
+  },
+  "metadata": {
+    "version": "1.0",
+    "tegufox_version": "0.1.0"
+  }
+}

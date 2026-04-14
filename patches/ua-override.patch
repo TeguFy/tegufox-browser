@@ -1,0 +1,34 @@
+# Tegufox Custom Patch
+# Generated: 2026-04-13T13:25:48.103730
+# Pattern: Early Return Pattern
+# Config key: navigator.userAgent
+#
+diff --git a/dom/base/Navigator.cpp b/dom/base/Navigator.cpp
+index 0000000000..1111111111 100644
+--- a/dom/base/Navigator.cpp
++++ b/dom/base/Navigator.cpp
+@@ -1,6 +1,7 @@
+ #include "mozilla/dom/Something.h"
++#include "MaskConfig.hpp"
+ 
+ namespace mozilla::dom {
+ 
+@@ -10,6 +11,10 @@ namespace mozilla::dom {
+ std::string Navigator::GetUserAgent() {
++  // Tegufox: ua-override - Early Return Override
++  if (auto value = MaskConfig::GetString("navigator.userAgent"))
++    return value.value();
++
+   // Original implementation with all existing logic preserved
+   return defaultValue;
+ }
+
+diff --git a/dom/base/moz.build b/dom/base/moz.build
+index 0000000000..1111111111 100644
+--- a/dom/base/moz.build
++++ b/dom/base/moz.build
+@@ -100,3 +100,6 @@
+ FINAL_LIBRARY = "xul"
++
++# Tegufox: Custom patch - ua-override
++LOCAL_INCLUDES += ["/camoucfg"]

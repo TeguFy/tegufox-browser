@@ -1,0 +1,186 @@
+{
+  "name": "safari-17-macos",
+  "description": "Safari 17 on macOS Sonoma - Complete TLS + HTTP/2 fingerprint",
+  "created": "2026-04-13",
+  "version": "1.0",
+  
+  "screen": {
+    "width": 1470,
+    "height": 956,
+    "availWidth": 1470,
+    "availHeight": 916,
+    "colorDepth": 30,
+    "pixelDepth": 30
+  },
+  
+  "navigator": {
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+    "platform": "MacIntel",
+    "hardwareConcurrency": 8,
+    "deviceMemory": 8,
+    "maxTouchPoints": 0,
+    "vendor": "Apple Computer, Inc.",
+    "language": "en-US",
+    "languages": ["en-US", "en"]
+  },
+  
+  "tls": {
+    "version": "1.3",
+    "cipher_suites": [
+      "TLS_AES_128_GCM_SHA256",
+      "TLS_AES_256_GCM_SHA384",
+      "TLS_CHACHA20_POLY1305_SHA256",
+      "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
+      "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+      "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256",
+      "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
+      "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+      "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256",
+      "TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA",
+      "TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA",
+      "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA",
+      "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA"
+    ],
+    "extensions": {
+      "sni": true,
+      "alpn": ["h2", "http/1.1"],
+      "supported_groups": ["x25519", "secp256r1", "secp384r1", "secp521r1"],
+      "signature_algorithms": [
+        "ecdsa_secp256r1_sha256",
+        "rsa_pss_rsae_sha256",
+        "rsa_pkcs1_sha256",
+        "ecdsa_secp384r1_sha384",
+        "ecdsa_secp521r1_sha512",
+        "rsa_pss_rsae_sha384",
+        "rsa_pss_rsae_sha512",
+        "rsa_pkcs1_sha384",
+        "rsa_pkcs1_sha512",
+        "ecdsa_sha1",
+        "rsa_pkcs1_sha1"
+      ]
+    }
+  },
+  
+  "http2": {
+    "settings": {
+      "header_table_size": 4096,
+      "enable_push": 0,
+      "max_concurrent_streams": 100,
+      "initial_window_size": 2097152,
+      "max_frame_size": 16384
+    },
+    "window_update": 10485760,
+    "priority_frames": false,
+    "pseudo_header_order": ["method", "scheme", "authority", "path"]
+  },
+  
+  "webgl": {
+    "vendor": "Apple Inc.",
+    "renderer": "Apple GPU",
+    "extensions": [
+      "ANGLE_instanced_arrays",
+      "EXT_blend_minmax",
+      "EXT_color_buffer_half_float",
+      "EXT_float_blend",
+      "EXT_frag_depth",
+      "EXT_shader_texture_lod",
+      "EXT_texture_filter_anisotropic",
+      "EXT_sRGB",
+      "OES_element_index_uint",
+      "OES_standard_derivatives",
+      "OES_texture_float",
+      "OES_texture_float_linear",
+      "OES_texture_half_float",
+      "OES_texture_half_float_linear",
+      "OES_vertex_array_object",
+      "WEBGL_color_buffer_float",
+      "WEBGL_compressed_texture_s3tc",
+      "WEBGL_compressed_texture_s3tc_srgb",
+      "WEBGL_debug_renderer_info",
+      "WEBGL_debug_shaders",
+      "WEBGL_depth_texture",
+      "WEBGL_draw_buffers",
+      "WEBGL_lose_context"
+    ],
+    "parameters": {
+      "MAX_TEXTURE_SIZE": 16384,
+      "MAX_VERTEX_ATTRIBS": 16,
+      "MAX_VIEWPORT_DIMS": [16384, 16384],
+      "MAX_CUBE_MAP_TEXTURE_SIZE": 16384,
+      "MAX_RENDERBUFFER_SIZE": 16384,
+      "MAX_COMBINED_TEXTURE_IMAGE_UNITS": 32,
+      "MAX_VERTEX_TEXTURE_IMAGE_UNITS": 16,
+      "MAX_TEXTURE_IMAGE_UNITS": 16,
+      "MAX_FRAGMENT_UNIFORM_VECTORS": 1024,
+      "MAX_VERTEX_UNIFORM_VECTORS": 1024,
+      "SHADING_LANGUAGE_VERSION": "WebGL GLSL ES 1.0 (1.0)",
+      "VERSION": "WebGL 1.0 (Metal - 88.1)"
+    }
+  },
+  
+  "canvas": {
+    "noise": {
+      "seed": "safari-17-session-001",
+      "intensity": 0.01,
+      "magnitude": 1,
+      "edge_bias": 1.0,
+      "strategy": "gpu",
+      "temporal_variation": 0.0003,
+      "sparse_probability": 0.015
+    }
+  },
+  
+  "dns_config": {
+    "enabled": true,
+    "provider": "cloudflare",
+    "rationale": "Apple uses Cloudflare for iCloud Private Relay",
+    "doh": {
+      "uri": "https://mozilla.cloudflare-dns.com/dns-query",
+      "bootstrap_address": "1.1.1.1",
+      "mode": 3,
+      "strict_fallback": true,
+      "disable_ecs": true
+    },
+    "ipv6": {
+      "enabled": false,
+      "reason": "Prevent IPv6 leaks (most VPNs IPv4-only)"
+    },
+    "webrtc": {
+      "enabled": false,
+      "reason": "Prevent WebRTC IP leaks"
+    },
+    "prefetch": {
+      "dns_prefetch": false,
+      "link_prefetch": false,
+      "reason": "Prevent speculative DNS queries"
+    }
+  },
+  
+  "firefox_preferences": {
+    "network.trr.mode": 3,
+    "network.trr.uri": "https://mozilla.cloudflare-dns.com/dns-query",
+    "network.trr.bootstrapAddress": "1.1.1.1",
+    "network.trr.strict_native_fallback": true,
+    "network.trr.max_fails": 5,
+    "network.trr.request_timeout_ms": 3000,
+    "network.trr.disable-ECS": true,
+    "network.trr.early-AAAA": false,
+    "network.dns.disableIPv6": true,
+    "media.peerconnection.enabled": false,
+    "media.navigator.enabled": false,
+    "media.getusermedia.screensharing.enabled": false,
+    "media.peerconnection.ice.default_address_only": true,
+    "media.peerconnection.ice.no_host": true,
+    "media.peerconnection.ice.obfuscate_host_addresses": true,
+    "network.dns.disablePrefetch": true,
+    "network.prefetch-next": false,
+    "network.http.speculative-parallel-limit": 0
+  },
+  
+  "fingerprints": {
+    "ja3": "88a0145f0d8c6c0b2c3e5f9a7b8c9d0e",
+    "ja4": "t13d915h2_9c5e8a7f3b2d_1a4c7e9f2b5d",
+    "akamai_http2": "1:4096;2:0;3:100;4:2097152;5:16384|10485760|0|m,s,a,p",
+    "notes": "Safari 17 uses SecureTransport. Unique pseudo-header order (m,s,a,p) different from Chrome/Firefox. DoH uses Cloudflare to match Apple infrastructure."
+  }
+}

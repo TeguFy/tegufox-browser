@@ -1,0 +1,62 @@
+Tegufox Browser Toolkit - Build & Test Summary
+Phase 1 Week 2 Day 5
+Generated: Mon Apr 13 23:10:11 +07 2026
+
+═══════════════════════════════════════════════════════════
+
+PATCH FILES
+-----------
+✅ canvas-noise-v2.patch    (     298 lines)
+✅ webgl-enhanced.patch     (     354 lines)
+
+PROFILE TEMPLATES
+-----------------
+✅ amazon-seller-1.json
+✅ android-test.json
+✅ etsy-shop-1.json
+✅ macbook-test.json
+✅ test-amazon-profile.json
+✅ test-canvas-v2.json
+✅ test-ebay-profile.json
+✅ test-launch-final.json
+✅ test-merged-profile.json
+✅ test-webgl-template.json
+✅ xxx.json
+✅ xxxxx.json
+
+TEST SUITES
+-----------
+✅ test_canvas_noise_v2.py  (200 lines) - Requires patched build
+✅ test_webgl_enhanced.py   (350 lines) - Requires patched build
+✅ test_mouse_movement_v2.py (250 lines) - Works with current Camoufox
+
+DOCUMENTATION
+-------------
+✅ CANVAS_NOISE_V2_DESIGN.md    (1,100 lines)
+✅ CANVAS_NOISE_V2_GUIDE.md     (950 lines)
+✅ MOUSE_MOVEMENT_V2_DESIGN.md  (1,050 lines)
+✅ MOUSE_MOVEMENT_V2_GUIDE.md   (1,100 lines)
+✅ WEBGL_ENHANCED_DESIGN.md     (1,950 lines)
+✅ WEBGL_ENHANCED_GUIDE.md      (950 lines)
+✅ FIREFOX_BUILD_INTEGRATION.md (550 lines)
+
+NEXT STEPS
+----------
+1. Build Firefox/Camoufox with patches:
+   cd ~/dev/2026-3/camoufox-build
+   patch -p1 < ~/dev/2026-3/tegufox-browser/patches/canvas-noise-v2.patch
+   patch -p1 < ~/dev/2026-3/tegufox-browser/patches/webgl-enhanced.patch
+   ./mach build -j8
+   
+2. Run full test suite:
+   python3 test_canvas_noise_v2.py profiles/test-canvas-v2.json
+   python3 test_webgl_enhanced.py profiles/test-webgl-template.json
+   python3 test_mouse_movement_v2.py
+   
+3. Manual testing:
+   - BrowserLeaks: https://browserleaks.com/canvas
+   - BrowserLeaks: https://browserleaks.com/webgl
+   - CreepJS: https://abrahamjuliot.github.io/creepjs/
+   - Amazon.com: Real-world e-commerce test
+
+═══════════════════════════════════════════════════════════
