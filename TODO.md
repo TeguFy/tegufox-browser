@@ -98,25 +98,27 @@ Xem `patches/tegufox/series` cho thứ tự apply. Còn pending: end-to-end buil
 ## Phase 4: Behavioral Layer
 
 ### Mouse Movement v2
-- [ ] Statistical validation vs. real human data
-- [ ] C++ event-level integration
+- [x] Bezier paths + Fitts’ Law + tremor + overshoot (`tegufox_mouse.py`)
+- [x] Statistical validation (velocity bell curve, tremor Gaussian, overshoot)
+- [ ] C++ event-level integration (requires packaged binary)
 - [ ] Visual trajectory plots for QA
 
 ### Keyboard
-- [ ] Inter-keystroke interval: log-normal distribution
-- [ ] Per-bigram timing model
-- [ ] Typo + correction simulation
-- [ ] WPM distribution: 40–80 WPM
+- [x] `tegufox_keyboard.py` — HumanKeyboard class
+- [x] Inter-keystroke interval: log-normal distribution
+- [x] Per-bigram timing model (50+ bigrams)
+- [x] Typo + correction simulation (adjacent key bias + backspace)
+- [x] WPM envelope: 40–80 WPM with warmup + fatigue
 
 ### Scroll
-- [ ] Easing curves (ease-out-cubic)
-- [ ] Platform-specific step sizes
-- [ ] Random pause simulation
+- [x] Ease-out-cubic physics in `tegufox_mouse.scroll()`
+- [x] Platform-specific step sizes (win=100, mac=40, linux=53)
+- [x] Random micro-pause simulation (8% per tick)
 
 ### Bot Detection Validation
-- [ ] Cloudflare Turnstile pass rate > 90%
-- [ ] reCAPTCHA v3 score > 0.7
-- [ ] Human behavior validation suite
+- [x] 16 statistical validation tests (mouse + keyboard + scroll)
+- [ ] Cloudflare Turnstile pass rate > 90% (requires live testing)
+- [ ] reCAPTCHA v3 score > 0.7 (requires live testing)
 
 ---
 

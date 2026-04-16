@@ -201,16 +201,40 @@ class HumanMouse:
 
         self._last_position = end
 
-    def scroll(self, delta_y: int):
+    def scroll(self, delta_y: int, platform: str = "windows"):
         """
-        Scroll page with natural physics simulation
+        Scroll with ease-out-cubic physics and platform-specific step sizes.
 
         Args:
-            delta_y: Vertical scroll distance (pixels)
+            delta_y: Total vertical distance (pixels, positive = down)
+            platform: "windows" | "macos" | "linux" u2014 affects step granularity
         """
-        # TODO: Implement physics-based scrolling with momentum
-        # For now, use simple scroll
-        self.page.mouse.wheel(0, delta_y)
+        if delta_y == 0:
+            return
+
+        # Platform-specific scroll step (pixels per tick)
+        step_sizes = {"windows": 100, "macos": 40, "linux": 53}
+        step = step_sizes.get(platform, 100)
+        direction = 1 if delta_y > 0 else -1
+        remaining = abs(delta_y)
+
+        while remaining > 0:
+            # Ease-out-cubic: fast at start, decelerate toward end
+            progress = 1.0 - (remaining / abs(delta_y))
+            ease = 1.0 - (1.0 - progress) ** 3  # cubic ease-out
+            speed_mult = max(0.3, 1.0 - ease * 0.7)  # slow down near end
+
+            tick = min(remaining, int(step * speed_mult) + random.randint(-5, 5))
+            tick = max(1, tick)
+
+            self.page.mouse.wheel(0, direction * tick)
+            remaining -= tick
+
+            # Inter-tick delay: faster at start, random pauses
+            base_delay = random.uniform(0.015, 0.045)
+            if random.random() < 0.08:  # 8% chance of micro-pause
+                base_delay += random.uniform(0.05, 0.15)
+            time.sleep(base_delay / speed_mult)
 
     # =========================================================================
     # PRIVATE METHODS - Bezier Path Generation
