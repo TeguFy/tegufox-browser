@@ -82,6 +82,29 @@ class TestGenerator:
         assert len(data["profiles"]) == 3
 
 
+class TestSessions:
+    def test_create_session_missing_profile(self, client):
+        r = client.post("/sessions", json={"profile": "nonexistent"})
+        assert r.status_code == 404
+
+    def test_list_sessions_empty(self, client):
+        r = client.get("/sessions")
+        assert r.status_code == 200
+        assert isinstance(r.json(), list)
+
+    def test_get_missing_session(self, client):
+        r = client.get("/sessions/notreal")
+        assert r.status_code == 404
+
+    def test_goto_missing_session(self, client):
+        r = client.post("/sessions/notreal/goto", json={"url": "https://example.com"})
+        assert r.status_code == 404
+
+    def test_close_missing_session(self, client):
+        r = client.delete("/sessions/notreal")
+        assert r.status_code == 404
+
+
 class TestRegistry:
     def test_record_and_stats(self, client):
         r = client.post("/registry/record", json={

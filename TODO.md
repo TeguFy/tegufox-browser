@@ -124,11 +124,12 @@ Xem `patches/tegufox/series` cho thứ tự apply. Còn pending: end-to-end buil
 
 ## Phase 5: Ecosystem & API
 
-- [ ] REST API: Profile management + browser control
+- [x] REST API: Profile CRUD, consistency scoring, fleet generation (13 endpoints)
+- [x] Browser control: /sessions/* (launch, goto, type, click, scroll, screenshot, evaluate, close)
+- [x] OpenAPI documentation (auto-generated at /docs)
 - [ ] Plugin system: loadable spoofing modules
 - [ ] Python SDK (pip installable)
 - [ ] Node.js / TypeScript SDK
-- [ ] OpenAPI documentation
 - [ ] Example projects
 
 ---
