@@ -227,16 +227,77 @@ def registry_stats():
 # Session control endpoints
 # ---------------------------------------------------------------------------
 
-import asyncio
 import base64
+import queue
 import threading
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 
-_sessions: dict[str, dict] = {}  # session_id -> {session, profile, created_at, ...}
+_sessions: dict[str, "SessionSlot"] = {}
 _session_lock = threading.Lock()
-_executor = ThreadPoolExecutor(max_workers=4)
+
+
+class SessionSlot:
+    """Wraps a TegufoxSession with a dedicated thread + command queue.
+
+    Playwright sync API uses greenlets: every call must happen in the same
+    thread that created the browser.  API requests arrive on FastAPI worker
+    threads, so we route all Playwright work through a per-session command
+    queue consumed by the session's own thread.
+    """
+
+    def __init__(self, profile: str, headless: bool):
+        self.profile = profile
+        self.headless = headless
+        self.status = "starting"
+        self.error: Optional[str] = None
+        self.created_at = time.time()
+        self._cmd_q: queue.Queue = queue.Queue()
+        self._session = None
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _run(self):
+        """Session thread: start browser then process commands forever."""
+        from tegufox_automation import TegufoxSession
+        try:
+            self._session = TegufoxSession(profile=self.profile, headless=self.headless)
+            self._session.start()
+            self.status = "running"
+        except Exception as e:
+            self.status = "error"
+            self.error = str(e)
+            return
+
+        while True:
+            item = self._cmd_q.get()
+            if item is None:  # poison pill
+                break
+            fn, result_q = item
+            try:
+                result_q.put(("ok", fn(self._session)))
+            except Exception as e:
+                result_q.put(("err", e))
+
+        try:
+            self._session.stop()
+        except Exception:
+            pass
+
+    def execute(self, fn, timeout: float = 60):
+        """Run `fn(session)` on the session thread; block until done."""
+        if self.status != "running":
+            raise RuntimeError(f"Session is {self.status}, not running")
+        result_q: queue.Queue = queue.Queue()
+        self._cmd_q.put((fn, result_q))
+        tag, value = result_q.get(timeout=timeout)
+        if tag == "err":
+            raise value
+        return value
+
+    def close(self):
+        self._cmd_q.put(None)  # poison pill
+        self._thread.join(timeout=10)
 
 
 class SessionCreateRequest(BaseModel):
@@ -254,21 +315,16 @@ class SessionActionRequest(BaseModel):
     direction: str = "down"
 
 
-def _launch_session(session_id: str, profile_name: str, headless: bool, url: Optional[str]):
-    """Launch browser in background thread (blocking Playwright calls)."""
-    from tegufox_automation import TegufoxSession
-    try:
-        session = TegufoxSession(profile=profile_name, headless=headless)
-        session.start()
-        with _session_lock:
-            _sessions[session_id]["session"] = session
-            _sessions[session_id]["status"] = "running"
-        if url:
-            session.goto(url)
-    except Exception as e:
-        with _session_lock:
-            _sessions[session_id]["status"] = "error"
-            _sessions[session_id]["error"] = str(e)
+def _get_slot(session_id: str) -> SessionSlot:
+    with _session_lock:
+        slot = _sessions.get(session_id)
+    if not slot:
+        raise HTTPException(404, f"Session not found: {session_id}")
+    if slot.status == "error":
+        raise HTTPException(500, f"Session error: {slot.error}")
+    if slot.status != "running":
+        raise HTTPException(409, f"Session {session_id} is {slot.status}")
+    return slot
 
 
 @app.post("/sessions", tags=["sessions"], status_code=201)
@@ -278,17 +334,20 @@ def create_session(req: SessionCreateRequest):
         raise HTTPException(404, f"Profile not found: {req.profile}")
 
     session_id = str(uuid.uuid4())[:8]
+    slot = SessionSlot(req.profile, req.headless)
     with _session_lock:
-        _sessions[session_id] = {
-            "session": None,
-            "profile": req.profile,
-            "status": "starting",
-            "created_at": time.time(),
-            "error": None,
-        }
+        _sessions[session_id] = slot
 
-    _executor.submit(_launch_session, session_id, req.profile, req.headless, req.url)
-    return {"session_id": session_id, "status": "starting", "profile": req.profile}
+    # Wait briefly for startup
+    for _ in range(50):
+        if slot.status != "starting":
+            break
+        time.sleep(0.1)
+
+    if req.url and slot.status == "running":
+        slot.execute(lambda s: s.goto(req.url))
+
+    return {"session_id": session_id, "status": slot.status, "profile": req.profile}
 
 
 @app.get("/sessions", tags=["sessions"])
@@ -296,13 +355,8 @@ def list_sessions():
     """List all active sessions."""
     with _session_lock:
         return [
-            {
-                "session_id": sid,
-                "profile": info["profile"],
-                "status": info["status"],
-                "created_at": info["created_at"],
-            }
-            for sid, info in _sessions.items()
+            {"session_id": sid, "profile": sl.profile, "status": sl.status, "created_at": sl.created_at}
+            for sid, sl in _sessions.items()
         ]
 
 
@@ -310,25 +364,10 @@ def list_sessions():
 def get_session(session_id: str):
     """Get session status."""
     with _session_lock:
-        info = _sessions.get(session_id)
-    if not info:
+        slot = _sessions.get(session_id)
+    if not slot:
         raise HTTPException(404, f"Session not found: {session_id}")
-    return {
-        "session_id": session_id,
-        "profile": info["profile"],
-        "status": info["status"],
-        "error": info["error"],
-    }
-
-
-def _get_running_session(session_id: str):
-    with _session_lock:
-        info = _sessions.get(session_id)
-    if not info:
-        raise HTTPException(404, f"Session not found: {session_id}")
-    if info["status"] != "running":
-        raise HTTPException(409, f"Session {session_id} is {info['status']}, not running")
-    return info["session"]
+    return {"session_id": session_id, "profile": slot.profile, "status": slot.status, "error": slot.error}
 
 
 @app.post("/sessions/{session_id}/goto", tags=["sessions"])
@@ -336,53 +375,46 @@ def session_goto(session_id: str, req: SessionActionRequest):
     """Navigate session to a URL."""
     if not req.url:
         raise HTTPException(400, "url is required")
-    session = _get_running_session(session_id)
-    session.goto(req.url)
+    _get_slot(session_id).execute(lambda s: s.goto(req.url))
     return {"navigated": req.url}
 
 
 @app.post("/sessions/{session_id}/type", tags=["sessions"])
 def session_type(session_id: str, req: SessionActionRequest):
-    """Type text into an element."""
+    """Type text into an element with human-like timing."""
     if not req.selector or not req.text:
         raise HTTPException(400, "selector and text are required")
-    session = _get_running_session(session_id)
-    session.human_type(req.selector, req.text, wpm=req.wpm)
+    _get_slot(session_id).execute(lambda s: s.human_type(req.selector, req.text, wpm=req.wpm))
     return {"typed": len(req.text), "selector": req.selector}
 
 
 @app.post("/sessions/{session_id}/click", tags=["sessions"])
 def session_click(session_id: str, req: SessionActionRequest):
-    """Click an element."""
+    """Click an element with human-like mouse movement."""
     if not req.selector:
         raise HTTPException(400, "selector is required")
-    session = _get_running_session(session_id)
-    session.human_click(req.selector)
+    _get_slot(session_id).execute(lambda s: s.human_click(req.selector))
     return {"clicked": req.selector}
 
 
 @app.post("/sessions/{session_id}/scroll", tags=["sessions"])
 def session_scroll(session_id: str, req: SessionActionRequest):
-    """Scroll the page."""
-    session = _get_running_session(session_id)
-    session.human_scroll(distance=req.distance or 500, direction=req.direction)
+    """Scroll the page with physics-based easing."""
+    _get_slot(session_id).execute(lambda s: s.human_scroll(distance=req.distance or 500, direction=req.direction))
     return {"scrolled": req.distance or 500, "direction": req.direction}
 
 
 @app.get("/sessions/{session_id}/screenshot", tags=["sessions"])
 def session_screenshot(session_id: str):
     """Take a screenshot (returns base64 PNG)."""
-    session = _get_running_session(session_id)
-    raw = session.page.screenshot()
-    b64 = base64.b64encode(raw).decode()
-    return {"format": "png", "base64": b64}
+    raw = _get_slot(session_id).execute(lambda s: s.page.screenshot())
+    return {"format": "png", "base64": base64.b64encode(raw).decode()}
 
 
 @app.get("/sessions/{session_id}/evaluate", tags=["sessions"])
 def session_evaluate(session_id: str, expression: str = Query(...)):
     """Evaluate JavaScript in the page."""
-    session = _get_running_session(session_id)
-    result = session.page.evaluate(expression)
+    result = _get_slot(session_id).execute(lambda s: s.page.evaluate(expression))
     return {"result": result}
 
 
@@ -390,14 +422,10 @@ def session_evaluate(session_id: str, expression: str = Query(...)):
 def close_session(session_id: str):
     """Close and clean up a session."""
     with _session_lock:
-        info = _sessions.pop(session_id, None)
-    if not info:
+        slot = _sessions.pop(session_id, None)
+    if not slot:
         raise HTTPException(404, f"Session not found: {session_id}")
-    if info["session"]:
-        try:
-            info["session"].stop()
-        except Exception:
-            pass
+    slot.close()
     return {"closed": session_id}
 
 
