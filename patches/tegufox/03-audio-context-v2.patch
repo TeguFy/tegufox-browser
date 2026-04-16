@@ -1,0 +1,453 @@
+diff --git a/dom/media/webaudio/AnalyserNode.cpp b/dom/media/webaudio/AnalyserNode.cpp
+index 79fb2ca7dd..f87a300b6e 100644
+--- a/dom/media/webaudio/AnalyserNode.cpp
++++ b/dom/media/webaudio/AnalyserNode.cpp
+@@ -14,10 +14,14 @@
+ #include "mozilla/dom/AnalyserNodeBinding.h"
+ #include "nsMathUtils.h"
+ #include "AudioFingerprintManager.h"
++#include "TegufoxAudioNoise.h"
+ #include "nsPIDOMWindow.h"
+ #include "nsIGlobalObject.h"
+ #include "mozilla/dom/BrowsingContext.h"
+ #include "mozilla/dom/WorkerPrivate.h"
++#include "mozilla/dom/Document.h"
++#include "nsIURI.h"
++#include "nsNetCID.h"
+ 
+ namespace mozilla {
+ 
+@@ -234,10 +238,27 @@ void AnalyserNode::GetFloatFrequencyData(const Float32Array& aArray) {
+     } else if (WorkerPrivate* wp = GetCurrentThreadWorkerPrivate()) {
+       userContextId = wp->GetOriginAttributes().mUserContextId;
+     }
++    
++    // CAMOUFOX: Apply userContext-based noise
+     uint32_t seed = AudioFingerprintManager::GetSeed(userContextId);
+     if (seed != 0) {
+       AudioFingerprintManager::ApplyTransformation(mOutputBuffer.Elements(), mOutputBuffer.Length(), seed);
+     }
++    
++    // TEGUFOX: Apply domain-based Gaussian noise ON TOP
++    if (global) {
++      if (Document* doc = global->GetExtantDoc()) {
++        if (nsIURI* uri = doc->GetDocumentURI()) {
++          nsAutoCString host;
++          if (NS_SUCCEEDED(uri->GetHost(host)) && !host.IsEmpty()) {
++            uint64_t domainSeed = TegufoxAudioNoise::GenerateDomainSeed(host.get(), host.Length());
++            if (domainSeed != 0) {
++              TegufoxAudioNoise::ApplyGaussianNoise(mOutputBuffer.Elements(), mOutputBuffer.Length(), domainSeed);
++            }
++          }
++        }
++      }
++    }
+   }
+   aArray.ProcessData([&](const Span<float>& aData, JS::AutoCheckCannotGC&&) {
+     size_t length = std::min(size_t(aData.Length()), mOutputBuffer.Length());
+@@ -268,10 +289,27 @@ void AnalyserNode::GetByteFrequencyData(const Uint8Array& aArray) {
+     } else if (WorkerPrivate* wp = GetCurrentThreadWorkerPrivate()) {
+       userContextId = wp->GetOriginAttributes().mUserContextId;
+     }
++    
++    // CAMOUFOX: Apply userContext-based noise
+     uint32_t seed = AudioFingerprintManager::GetSeed(userContextId);
+     if (seed != 0) {
+       AudioFingerprintManager::ApplyTransformation(mOutputBuffer.Elements(), mOutputBuffer.Length(), seed);
+     }
++    
++    // TEGUFOX: Apply domain-based Gaussian noise ON TOP
++    if (global) {
++      if (Document* doc = global->GetExtantDoc()) {
++        if (nsIURI* uri = doc->GetDocumentURI()) {
++          nsAutoCString host;
++          if (NS_SUCCEEDED(uri->GetHost(host)) && !host.IsEmpty()) {
++            uint64_t domainSeed = TegufoxAudioNoise::GenerateDomainSeed(host.get(), host.Length());
++            if (domainSeed != 0) {
++              TegufoxAudioNoise::ApplyGaussianNoise(mOutputBuffer.Elements(), mOutputBuffer.Length(), domainSeed);
++            }
++          }
++        }
++      }
++    }
+   }
+   const double rangeScaleFactor = 1.0 / (mMaxDecibels - mMinDecibels);
+ 
+@@ -309,10 +347,27 @@ void AnalyserNode::GetFloatTimeDomainData(const Float32Array& aArray) {
+       } else if (WorkerPrivate* wp = GetCurrentThreadWorkerPrivate()) {
+         userContextId = wp->GetOriginAttributes().mUserContextId;
+       }
++      
++      // CAMOUFOX: Apply userContext-based noise
+       uint32_t seed = AudioFingerprintManager::GetSeed(userContextId);
+       if (seed != 0) {
+         AudioFingerprintManager::ApplyTransformation(aData.Elements(), length, seed);
+       }
++      
++      // TEGUFOX: Apply domain-based Gaussian noise ON TOP
++      if (global) {
++        if (Document* doc = global->GetExtantDoc()) {
++          if (nsIURI* uri = doc->GetDocumentURI()) {
++            nsAutoCString host;
++            if (NS_SUCCEEDED(uri->GetHost(host)) && !host.IsEmpty()) {
++              uint64_t domainSeed = TegufoxAudioNoise::GenerateDomainSeed(host.get(), host.Length());
++              if (domainSeed != 0) {
++                TegufoxAudioNoise::ApplyGaussianNoise(aData.Elements(), length, domainSeed);
++              }
++            }
++          }
++        }
++      }
+     }
+   });
+ }
+@@ -341,10 +396,27 @@ void AnalyserNode::GetByteTimeDomainData(const Uint8Array& aArray) {
+       } else if (WorkerPrivate* wp = GetCurrentThreadWorkerPrivate()) {
+         userContextId = wp->GetOriginAttributes().mUserContextId;
+       }
++      
++      // CAMOUFOX: Apply userContext-based noise
+       uint32_t seed = AudioFingerprintManager::GetSeed(userContextId);
+       if (seed != 0) {
+         AudioFingerprintManager::ApplyTransformation(tmpBuffer.Elements(), length, seed);
+       }
++      
++      // TEGUFOX: Apply domain-based Gaussian noise ON TOP
++      if (global) {
++        if (Document* doc = global->GetExtantDoc()) {
++          if (nsIURI* uri = doc->GetDocumentURI()) {
++            nsAutoCString host;
++            if (NS_SUCCEEDED(uri->GetHost(host)) && !host.IsEmpty()) {
++              uint64_t domainSeed = TegufoxAudioNoise::GenerateDomainSeed(host.get(), host.Length());
++              if (domainSeed != 0) {
++                TegufoxAudioNoise::ApplyGaussianNoise(tmpBuffer.Elements(), length, domainSeed);
++              }
++            }
++          }
++        }
++      }
+     }
+     unsigned char* buffer = aData.Elements();
+     for (size_t i = 0; i < length; ++i) {
+@@ -354,6 +426,25 @@ void AnalyserNode::GetByteTimeDomainData(const Uint8Array& aArray) {
+           std::max(0.0f, std::min(float(UCHAR_MAX), 128.0f * (value + 1.0f)));
+       buffer[i] = static_cast<unsigned char>(scaled);
+     }
++    
++    // TEGUFOX: Apply byte-specific noise AFTER float→byte conversion
++    // This prevents noise from being lost during quantization
++    AudioContext* context = GetParentObject();
++    nsIGlobalObject* globalObj = context ? context->GetParentObject() : nullptr;
++    nsPIDOMWindowInner* global = globalObj ? globalObj->GetAsInnerWindow() : nullptr;
++    if (global) {
++      if (Document* doc = global->GetExtantDoc()) {
++        if (nsIURI* uri = doc->GetDocumentURI()) {
++          nsAutoCString host;
++          if (NS_SUCCEEDED(uri->GetHost(host)) && !host.IsEmpty()) {
++            uint64_t domainSeed = TegufoxAudioNoise::GenerateDomainSeed(host.get(), host.Length());
++            if (domainSeed != 0) {
++              TegufoxAudioNoise::ApplyGaussianNoiseToBytes(buffer, length, domainSeed);
++            }
++          }
++        }
++      }
++    }
+   });
+ }
+ 
+diff --git a/dom/media/webaudio/TegufoxAudioNoise.cpp b/dom/media/webaudio/TegufoxAudioNoise.cpp
+new file mode 100644
+index 0000000000..0e2dac9e6c
+--- /dev/null
++++ b/dom/media/webaudio/TegufoxAudioNoise.cpp
+@@ -0,0 +1,185 @@
++/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#include "TegufoxAudioNoise.h"
++
++#include <cstring>
++#include <random>
++
++// XXH64 constants
++static constexpr uint64_t PRIME64_1 = 0x9E3779B185EBCA87ULL;
++static constexpr uint64_t PRIME64_2 = 0xC2B2AE3D27D4EB4FULL;
++static constexpr uint64_t PRIME64_3 = 0x165667B19E3779F9ULL;
++static constexpr uint64_t PRIME64_4 = 0x85EBCA77C2B2AE63ULL;
++static constexpr uint64_t PRIME64_5 = 0x27D4EB2F165667C5ULL;
++
++static inline uint64_t XXH_rotl64(uint64_t x, int r) {
++  return (x << r) | (x >> (64 - r));
++}
++
++// Simplified XXH64 implementation
++uint64_t TegufoxAudioNoise::XXH64(const char* data, size_t len,
++                                  uint64_t seed) {
++  uint64_t h64;
++
++  if (len >= 32) {
++    uint64_t v1 = seed + PRIME64_1 + PRIME64_2;
++    uint64_t v2 = seed + PRIME64_2;
++    uint64_t v3 = seed + 0;
++    uint64_t v4 = seed - PRIME64_1;
++
++    const char* end = data + len;
++    const char* limit = end - 32;
++
++    do {
++      uint64_t k1;
++      memcpy(&k1, data, sizeof(k1));
++      v1 += k1 * PRIME64_2;
++      v1 = XXH_rotl64(v1, 31) * PRIME64_1;
++      data += 8;
++
++      uint64_t k2;
++      memcpy(&k2, data, sizeof(k2));
++      v2 += k2 * PRIME64_2;
++      v2 = XXH_rotl64(v2, 31) * PRIME64_1;
++      data += 8;
++
++      uint64_t k3;
++      memcpy(&k3, data, sizeof(k3));
++      v3 += k3 * PRIME64_2;
++      v3 = XXH_rotl64(v3, 31) * PRIME64_1;
++      data += 8;
++
++      uint64_t k4;
++      memcpy(&k4, data, sizeof(k4));
++      v4 += k4 * PRIME64_2;
++      v4 = XXH_rotl64(v4, 31) * PRIME64_1;
++      data += 8;
++    } while (data <= limit);
++
++    h64 = XXH_rotl64(v1, 1) + XXH_rotl64(v2, 7) + XXH_rotl64(v3, 12) +
++          XXH_rotl64(v4, 18);
++
++    v1 *= PRIME64_2;
++    v1 = XXH_rotl64(v1, 31) * PRIME64_1;
++    h64 ^= v1;
++    h64 = h64 * PRIME64_1 + PRIME64_4;
++
++    v2 *= PRIME64_2;
++    v2 = XXH_rotl64(v2, 31) * PRIME64_1;
++    h64 ^= v2;
++    h64 = h64 * PRIME64_1 + PRIME64_4;
++
++    v3 *= PRIME64_2;
++    v3 = XXH_rotl64(v3, 31) * PRIME64_1;
++    h64 ^= v3;
++    h64 = h64 * PRIME64_1 + PRIME64_4;
++
++    v4 *= PRIME64_2;
++    v4 = XXH_rotl64(v4, 31) * PRIME64_1;
++    h64 ^= v4;
++    h64 = h64 * PRIME64_1 + PRIME64_4;
++
++  } else {
++    h64 = seed + PRIME64_5;
++  }
++
++  h64 += len;
++
++  // Process remaining bytes
++  const char* end = data + (len >= 32 ? len % 32 : len);
++  // Handle remaining 8-byte blocks
++  while (data + 8 <= end) {
++    uint64_t k1;
++    memcpy(&k1, data, sizeof(k1));
++    k1 *= PRIME64_2;
++    k1 = XXH_rotl64(k1, 31) * PRIME64_1;
++    h64 ^= k1;
++    h64 = XXH_rotl64(h64, 27) * PRIME64_1 + PRIME64_4;
++    data += 8;
++  }
++  // Handle remaining 4-byte block
++  if (data + 4 <= end) {
++    uint32_t k1;
++    memcpy(&k1, data, sizeof(k1));
++    h64 ^= static_cast<uint64_t>(k1) * PRIME64_1;
++    h64 = XXH_rotl64(h64, 23) * PRIME64_2 + PRIME64_3;
++    data += 4;
++  }
++  // Handle remaining bytes
++  while (data < end) {
++    h64 ^= static_cast<uint64_t>(static_cast<uint8_t>(*data)) * PRIME64_5;
++    h64 = XXH_rotl64(h64, 11) * PRIME64_1;
++    data++;
++  }
++
++  // Finalization
++  h64 ^= h64 >> 33;
++  h64 *= PRIME64_2;
++  h64 ^= h64 >> 29;
++  h64 *= PRIME64_3;
++  h64 ^= h64 >> 32;
++
++  return h64;
++}
++
++uint64_t TegufoxAudioNoise::GenerateDomainSeed(const char* aDomain,
++                                               size_t aDomainLen) {
++  if (!aDomain || aDomainLen == 0) {
++    return 0;
++  }
++
++  // Use a distinct seed constant for audio (different from canvas/font/TLS)
++  return XXH64(aDomain, aDomainLen, 0x4155444F4E4F4953ULL);  // "AUDONOIS"
++}
++
++void TegufoxAudioNoise::ApplyGaussianNoise(float* aData, size_t aLength,
++                                           uint64_t aSeed) {
++  if (!aData || aLength == 0 || aSeed == 0) {
++    return;
++  }
++
++  // Use domain seed for deterministic Gaussian noise.
++  // Same domain always produces identical noise pattern within a session,
++  // preventing cross-domain correlation while defeating audio fingerprinting.
++  std::mt19937_64 rng(aSeed);
++
++  // Very subtle noise for float audio data.
++  // Audio values are typically in [-1.0, 1.0] range for time domain
++  // or [-100, 0] dB range for frequency domain.
++  // StdDev of 0.0001 is ~0.01% perturbation — imperceptible to human ears
++  // but measurably different in fingerprint hashes.
++  std::normal_distribution<float> dist(0.0f, 0.0001f);
++
++  for (size_t i = 0; i < aLength; ++i) {
++    aData[i] += dist(rng);
++  }
++}
++
++void TegufoxAudioNoise::ApplyGaussianNoiseToBytes(unsigned char* aData,
++                                                  size_t aLength,
++                                                  uint64_t aSeed) {
++  if (!aData || aLength == 0 || aSeed == 0) {
++    return;
++  }
++
++  // Use a different seed offset for byte noise so it's independent of
++  // the float noise applied earlier (prevents correlation).
++  std::mt19937_64 rng(aSeed ^ 0x4259544553454544ULL);  // "BYTESEED"
++
++  // For byte data (0-255 range), apply ±1 noise with low probability.
++  // StdDev of 0.5 means ~68% of samples get ±0 (rounded), ~27% get ±1.
++  // This subtly alters the fingerprint without audible distortion.
++  std::normal_distribution<float> dist(0.0f, 0.5f);
++
++  for (size_t i = 0; i < aLength; ++i) {
++    float noise = dist(rng);
++    float val = static_cast<float>(aData[i]) + noise;
++    // Clamp to [0, 255]
++    if (val < 0.0f) val = 0.0f;
++    if (val > 255.0f) val = 255.0f;
++    aData[i] = static_cast<unsigned char>(val + 0.5f);  // round
++  }
++}
+diff --git a/dom/media/webaudio/TegufoxAudioNoise.h b/dom/media/webaudio/TegufoxAudioNoise.h
+new file mode 100644
+index 0000000000..6b1d306cc9
+--- /dev/null
++++ b/dom/media/webaudio/TegufoxAudioNoise.h
+@@ -0,0 +1,79 @@
++/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/*
++ * Tegufox Audio v2: Per-domain deterministic audio noise injection
++ *
++ * Algorithm:
++ *   1. Compute seed = XXH64(domain)
++ *   2. Use std::mt19937_64 seeded with domain hash for Gaussian noise
++ *   3. Apply subtle noise to float audio buffers (frequency/time domain)
++ *   4. Apply subtle noise to byte audio buffers (after quantization)
++ *
++ * Injection points:
++ *   - AnalyserNode::GetFloatFrequencyData()
++ *   - AnalyserNode::GetByteFrequencyData()
++ *   - AnalyserNode::GetFloatTimeDomainData()
++ *   - AnalyserNode::GetByteTimeDomainData()
++ *   - AudioBuffer::GetChannelData() / CopyFromChannel()
++ *
++ * Performance target: < 1% overhead on audio processing
++ *
++ * Author: Tegufox Browser Toolkit
++ * Date: April 15, 2026
++ */
++
++#ifndef DOM_MEDIA_WEBAUDIO_TEGUFOX_AUDIO_NOISE_H_
++#define DOM_MEDIA_WEBAUDIO_TEGUFOX_AUDIO_NOISE_H_
++
++#include <cstddef>
++#include <cstdint>
++
++class TegufoxAudioNoise {
++ public:
++  /**
++   * Generate a deterministic 64-bit seed from a domain string (UTF-8).
++   * Uses XXH64 hash algorithm for fast, collision-resistant hashing.
++   *
++   * @param aDomain - Domain name as UTF-8 C string (e.g., "example.com")
++   * @param aDomainLen - Length of domain string in bytes
++   * @return 64-bit seed value
++   */
++  static uint64_t GenerateDomainSeed(const char* aDomain, size_t aDomainLen);
++
++  /**
++   * Apply Gaussian noise to float audio data (frequency/time domain).
++   * Noise is deterministic based on seed, so same domain always produces
++   * the same perturbation pattern.
++   *
++   * @param aData - Float array to modify in place
++   * @param aLength - Number of float elements
++   * @param aSeed - 64-bit seed for reproducible noise
++   */
++  static void ApplyGaussianNoise(float* aData, size_t aLength, uint64_t aSeed);
++
++  /**
++   * Apply Gaussian noise to byte audio data (post-quantization).
++   * Uses smaller noise amplitude suitable for 8-bit range.
++   *
++   * @param aData - Byte array to modify in place
++   * @param aLength - Number of byte elements
++   * @param aSeed - 64-bit seed for reproducible noise
++   */
++  static void ApplyGaussianNoiseToBytes(unsigned char* aData, size_t aLength,
++                                        uint64_t aSeed);
++
++ private:
++  /**
++   * XXH64 hash implementation (simplified)
++   * See: https://github.com/Cyan4973/xxHash
++   */
++  static uint64_t XXH64(const char* data, size_t len, uint64_t seed);
++
++  TegufoxAudioNoise() = delete;
++  ~TegufoxAudioNoise() = delete;
++};
++
++#endif  // DOM_MEDIA_WEBAUDIO_TEGUFOX_AUDIO_NOISE_H_
+diff --git a/dom/media/webaudio/moz.build b/dom/media/webaudio/moz.build
+index 497a63894a..2179944c81 100644
+--- a/dom/media/webaudio/moz.build
++++ b/dom/media/webaudio/moz.build
+@@ -76,6 +76,7 @@ EXPORTS.mozilla.dom += [
+     "PeriodicWave.h",
+     "ScriptProcessorNode.h",
+     "StereoPannerNode.h",
++    "TegufoxAudioNoise.h",
+     "WaveShaperNode.h",
+ ]
+ 
+@@ -122,6 +123,7 @@ UNIFIED_SOURCES += [
+     "PeriodicWave.cpp",
+     "ScriptProcessorNode.cpp",
+     "StereoPannerNode.cpp",
++    "TegufoxAudioNoise.cpp",
+     "ThreeDPoint.cpp",
+     "WaveShaperNode.cpp",
+     "WebAudioUtils.cpp",

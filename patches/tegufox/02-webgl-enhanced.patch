@@ -1,0 +1,475 @@
+diff --git a/dom/canvas/ClientWebGLContext.cpp b/dom/canvas/ClientWebGLContext.cpp
+index 9d0dc0fe91..b4554faedd 100644
+--- a/dom/canvas/ClientWebGLContext.cpp
++++ b/dom/canvas/ClientWebGLContext.cpp
+@@ -5,6 +5,7 @@
+ 
+ #include "ClientWebGLContext.h"
+ #include "MaskConfig.hpp"
++#include "TegufoxGPUProfiles.h"  // Tegufox WebGL: GPU consistency
+ #include "WebGLParamsManager.h"
+ #include "mozilla/dom/BrowsingContext.h"
+ #include "mozilla/dom/Document.h"
+@@ -2640,6 +2641,28 @@ void ClientWebGLContext::GetParameter(JSContext* cx, GLenum pname,
+           default:
+             MOZ_CRASH();
+         }
++        
++        // TEGUFOX ENHANCEMENT: Validate GPU consistency
++        // Ensure vendor and renderer are consistent to prevent detection
++        if (ret) {
++          nsAutoString vendorStored, rendererStored;
++          bool hasVendor = WebGLParamsManager::GetVendor(GetUserContextId(), vendorStored);
++          bool hasRenderer = WebGLParamsManager::GetRenderer(GetUserContextId(), rendererStored);
++          
++          if (hasVendor && hasRenderer) {
++            std::string vendor = NS_ConvertUTF16toUTF8(vendorStored).get();
++            std::string renderer = NS_ConvertUTF16toUTF8(rendererStored).get();
++            
++            if (!TegufoxGPUProfiles::ValidateConsistency(vendor, renderer)) {
++              // Log warning about inconsistent GPU profile
++              printf_stderr("TEGUFOX WARNING: Inconsistent WebGL GPU profile detected!\n");
++              printf_stderr("  Vendor: %s\n", vendor.c_str());
++              printf_stderr("  Renderer: %s\n", renderer.c_str());
++              printf_stderr("  This may be detectable by fingerprinting scripts.\n");
++            }
++          }
++        }
++        
+         break;
+       }
+ 
+diff --git a/dom/canvas/TegufoxGPUProfiles.cpp b/dom/canvas/TegufoxGPUProfiles.cpp
+new file mode 100644
+index 0000000000..f40b619695
+--- /dev/null
++++ b/dom/canvas/TegufoxGPUProfiles.cpp
+@@ -0,0 +1,343 @@
++/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#include "TegufoxGPUProfiles.h"
++
++#include <algorithm>
++#include <cctype>
++#include <random>
++
++namespace mozilla {
++namespace dom {
++
++// ----- Helper Functions (forward declaration for use in member functions) -----
++
++static std::string ToLowerHelper(const std::string& str) {
++  std::string result = str;
++  std::transform(result.begin(), result.end(), result.begin(),
++                 [](unsigned char c) { return std::tolower(c); });
++  return result;
++}
++
++// ----- TegufoxGPUProfile Member Functions -----
++
++bool TegufoxGPUProfile::IsVendorMatch(const std::string& vendorQuery) const {
++  std::string vendorLower = ToLowerHelper(vendor);
++  std::string queryLower = ToLowerHelper(vendorQuery);
++  return vendorLower.find(queryLower) != std::string::npos ||
++         queryLower.find(vendorLower) != std::string::npos;
++}
++
++bool TegufoxGPUProfile::IsRendererMatch(const std::string& rendererQuery) const {
++  std::string rendererLower = ToLowerHelper(renderer);
++  std::string queryLower = ToLowerHelper(rendererQuery);
++  return rendererLower.find(queryLower) != std::string::npos ||
++         queryLower.find(rendererLower) != std::string::npos;
++}
++
++bool TegufoxGPUProfile::HasExtension(const std::string& extension) const {
++  return std::find(extensions.begin(), extensions.end(), extension) != extensions.end();
++}
++
++// ----- TegufoxGPUProfiles Static Functions -----
++
++const std::vector<TegufoxGPUProfile>& TegufoxGPUProfiles::GetProfiles() {
++  static const std::vector<TegufoxGPUProfile> profiles = {
++    // NVIDIA GeForce RTX 3080
++    {
++      .vendor = "Google Inc. (NVIDIA)",
++      .renderer = "ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 Direct3D11 vs_5_0 ps_5_0, D3D11)",
++      .extensions = {
++        "ANGLE_instanced_arrays",
++        "EXT_blend_minmax",
++        "EXT_color_buffer_half_float",
++        "EXT_disjoint_timer_query",
++        "EXT_float_blend",
++        "EXT_frag_depth",
++        "EXT_shader_texture_lod",
++        "EXT_texture_compression_rgtc",
++        "EXT_texture_filter_anisotropic",
++        "OES_element_index_uint",
++        "OES_standard_derivatives",
++        "OES_texture_float",
++        "OES_texture_float_linear",
++        "OES_texture_half_float",
++        "OES_texture_half_float_linear",
++        "OES_vertex_array_object",
++        "WEBGL_color_buffer_float",
++        "WEBGL_compressed_texture_s3tc",
++        "WEBGL_compressed_texture_s3tc_srgb",
++        "WEBGL_debug_renderer_info",
++        "WEBGL_debug_shaders",
++        "WEBGL_depth_texture",
++        "WEBGL_draw_buffers",
++        "WEBGL_lose_context",
++        "WEBGL_multi_draw"
++      },
++      .maxTextureSize = 32768,
++      .maxCubeMapTextureSize = 32768,
++      .maxRenderBufferSize = 32768,
++      .maxVertexAttribs = 16,
++      .maxTextureImageUnits = 32,
++      .maxVertexTextureImageUnits = 32,
++      .maxCombinedTextureImageUnits = 64,
++      .maxFragmentUniformVectors = 1024,
++      .maxVertexUniformVectors = 1024,
++      .maxVaryingVectors = 31
++    },
++    
++    // NVIDIA GeForce RTX 4090
++    {
++      .vendor = "Google Inc. (NVIDIA)",
++      .renderer = "ANGLE (NVIDIA, NVIDIA GeForce RTX 4090 Direct3D11 vs_5_0 ps_5_0, D3D11)",
++      .extensions = {
++        "ANGLE_instanced_arrays",
++        "EXT_blend_minmax",
++        "EXT_color_buffer_float",
++        "EXT_color_buffer_half_float",
++        "EXT_disjoint_timer_query",
++        "EXT_float_blend",
++        "EXT_frag_depth",
++        "EXT_shader_texture_lod",
++        "EXT_texture_compression_rgtc",
++        "EXT_texture_filter_anisotropic",
++        "OES_element_index_uint",
++        "OES_standard_derivatives",
++        "OES_texture_float",
++        "OES_texture_float_linear",
++        "OES_texture_half_float",
++        "OES_texture_half_float_linear",
++        "OES_vertex_array_object",
++        "WEBGL_color_buffer_float",
++        "WEBGL_compressed_texture_s3tc",
++        "WEBGL_compressed_texture_s3tc_srgb",
++        "WEBGL_debug_renderer_info",
++        "WEBGL_debug_shaders",
++        "WEBGL_depth_texture",
++        "WEBGL_draw_buffers",
++        "WEBGL_lose_context",
++        "WEBGL_multi_draw"
++      },
++      .maxTextureSize = 32768,
++      .maxCubeMapTextureSize = 32768,
++      .maxRenderBufferSize = 32768,
++      .maxVertexAttribs = 16,
++      .maxTextureImageUnits = 32,
++      .maxVertexTextureImageUnits = 32,
++      .maxCombinedTextureImageUnits = 64,
++      .maxFragmentUniformVectors = 1024,
++      .maxVertexUniformVectors = 1024,
++      .maxVaryingVectors = 31
++    },
++    
++    // Intel HD Graphics 620
++    {
++      .vendor = "Google Inc. (Intel)",
++      .renderer = "ANGLE (Intel, Intel(R) HD Graphics 620 Direct3D11 vs_5_0 ps_5_0, D3D11)",
++      .extensions = {
++        "ANGLE_instanced_arrays",
++        "EXT_blend_minmax",
++        "EXT_color_buffer_half_float",
++        "EXT_float_blend",
++        "EXT_frag_depth",
++        "EXT_shader_texture_lod",
++        "EXT_texture_filter_anisotropic",
++        "OES_element_index_uint",
++        "OES_standard_derivatives",
++        "OES_texture_float",
++        "OES_texture_float_linear",
++        "OES_texture_half_float",
++        "OES_texture_half_float_linear",
++        "OES_vertex_array_object",
++        "WEBGL_color_buffer_float",
++        "WEBGL_compressed_texture_s3tc",
++        "WEBGL_debug_renderer_info",
++        "WEBGL_debug_shaders",
++        "WEBGL_depth_texture",
++        "WEBGL_draw_buffers",
++        "WEBGL_lose_context"
++      },
++      .maxTextureSize = 16384,
++      .maxCubeMapTextureSize = 16384,
++      .maxRenderBufferSize = 16384,
++      .maxVertexAttribs = 16,
++      .maxTextureImageUnits = 16,
++      .maxVertexTextureImageUnits = 16,
++      .maxCombinedTextureImageUnits = 32,
++      .maxFragmentUniformVectors = 1024,
++      .maxVertexUniformVectors = 254,
++      .maxVaryingVectors = 15
++    },
++    
++    // AMD Radeon RX 6800
++    {
++      .vendor = "Google Inc. (AMD)",
++      .renderer = "ANGLE (AMD, AMD Radeon RX 6800 Direct3D11 vs_5_0 ps_5_0, D3D11)",
++      .extensions = {
++        "ANGLE_instanced_arrays",
++        "EXT_blend_minmax",
++        "EXT_color_buffer_float",
++        "EXT_color_buffer_half_float",
++        "EXT_disjoint_timer_query",
++        "EXT_float_blend",
++        "EXT_frag_depth",
++        "EXT_shader_texture_lod",
++        "EXT_texture_compression_rgtc",
++        "EXT_texture_filter_anisotropic",
++        "OES_element_index_uint",
++        "OES_standard_derivatives",
++        "OES_texture_float",
++        "OES_texture_float_linear",
++        "OES_texture_half_float",
++        "OES_texture_half_float_linear",
++        "OES_vertex_array_object",
++        "WEBGL_color_buffer_float",
++        "WEBGL_compressed_texture_s3tc",
++        "WEBGL_compressed_texture_s3tc_srgb",
++        "WEBGL_debug_renderer_info",
++        "WEBGL_debug_shaders",
++        "WEBGL_depth_texture",
++        "WEBGL_draw_buffers",
++        "WEBGL_lose_context",
++        "WEBGL_multi_draw"
++      },
++      .maxTextureSize = 32768,
++      .maxCubeMapTextureSize = 32768,
++      .maxRenderBufferSize = 32768,
++      .maxVertexAttribs = 16,
++      .maxTextureImageUnits = 32,
++      .maxVertexTextureImageUnits = 32,
++      .maxCombinedTextureImageUnits = 64,
++      .maxFragmentUniformVectors = 1024,
++      .maxVertexUniformVectors = 1024,
++      .maxVaryingVectors = 31
++    },
++    
++    // Apple M1
++    {
++      .vendor = "Apple Inc.",
++      .renderer = "Apple M1",
++      .extensions = {
++        "ANGLE_instanced_arrays",
++        "EXT_blend_minmax",
++        "EXT_color_buffer_half_float",
++        "EXT_float_blend",
++        "EXT_frag_depth",
++        "EXT_shader_texture_lod",
++        "EXT_texture_filter_anisotropic",
++        "OES_element_index_uint",
++        "OES_standard_derivatives",
++        "OES_texture_float",
++        "OES_texture_float_linear",
++        "OES_texture_half_float",
++        "OES_texture_half_float_linear",
++        "OES_vertex_array_object",
++        "WEBGL_color_buffer_float",
++        "WEBGL_compressed_texture_s3tc",
++        "WEBGL_debug_renderer_info",
++        "WEBGL_debug_shaders",
++        "WEBGL_depth_texture",
++        "WEBGL_draw_buffers",
++        "WEBGL_lose_context"
++      },
++      .maxTextureSize = 16384,
++      .maxCubeMapTextureSize = 16384,
++      .maxRenderBufferSize = 16384,
++      .maxVertexAttribs = 16,
++      .maxTextureImageUnits = 16,
++      .maxVertexTextureImageUnits = 16,
++      .maxCombinedTextureImageUnits = 32,
++      .maxFragmentUniformVectors = 1024,
++      .maxVertexUniformVectors = 1024,
++      .maxVaryingVectors = 31
++    }
++  };
++  
++  return profiles;
++}
++
++const TegufoxGPUProfile* TegufoxGPUProfiles::FindProfile(
++    const std::string& vendor, const std::string& renderer) {
++  const auto& profiles = GetProfiles();
++  
++  // Try exact match first
++  for (const auto& profile : profiles) {
++    if (profile.vendor == vendor && profile.renderer == renderer) {
++      return &profile;
++    }
++  }
++  
++  // Try partial match
++  for (const auto& profile : profiles) {
++    if (profile.IsVendorMatch(vendor) && profile.IsRendererMatch(renderer)) {
++      return &profile;
++    }
++  }
++  
++  return nullptr;
++}
++
++const TegufoxGPUProfile& TegufoxGPUProfiles::GetRandomProfile() {
++  const auto& profiles = GetProfiles();
++  static std::random_device rd;
++  static std::mt19937 gen(rd());
++  std::uniform_int_distribution<size_t> dist(0, profiles.size() - 1);
++  return profiles[dist(gen)];
++}
++
++bool TegufoxGPUProfiles::ValidateConsistency(const std::string& vendor,
++                                              const std::string& renderer) {
++  // Check for obvious mismatches
++  std::string vendorLower = ToLower(vendor);
++  std::string rendererLower = ToLower(renderer);
++  
++  // NVIDIA vendor should have NVIDIA renderer
++  if (ContainsIgnoreCase(vendorLower, "nvidia") && 
++      !ContainsIgnoreCase(rendererLower, "nvidia")) {
++    return false;
++  }
++  
++  // Intel vendor should have Intel renderer
++  if (ContainsIgnoreCase(vendorLower, "intel") && 
++      !ContainsIgnoreCase(rendererLower, "intel")) {
++    return false;
++  }
++  
++  // AMD vendor should have AMD renderer
++  if (ContainsIgnoreCase(vendorLower, "amd") && 
++      !ContainsIgnoreCase(rendererLower, "amd")) {
++    return false;
++  }
++  
++  // Apple vendor should have Apple renderer
++  if (ContainsIgnoreCase(vendorLower, "apple") && 
++      !ContainsIgnoreCase(rendererLower, "apple")) {
++    return false;
++  }
++  
++  // If we have a known profile, it's consistent
++  return FindProfile(vendor, renderer) != nullptr;
++}
++
++const std::vector<TegufoxGPUProfile>& TegufoxGPUProfiles::GetAllProfiles() {
++  return GetProfiles();
++}
++
++// ----- Helper Functions -----
++
++bool TegufoxGPUProfiles::ContainsIgnoreCase(const std::string& haystack,
++                                             const std::string& needle) {
++  return ToLower(haystack).find(ToLower(needle)) != std::string::npos;
++}
++
++std::string TegufoxGPUProfiles::ToLower(const std::string& str) {
++  std::string result = str;
++  std::transform(result.begin(), result.end(), result.begin(),
++                 [](unsigned char c) { return std::tolower(c); });
++  return result;
++}
++
++}  // namespace dom
++}  // namespace mozilla
+diff --git a/dom/canvas/TegufoxGPUProfiles.h b/dom/canvas/TegufoxGPUProfiles.h
+new file mode 100644
+index 0000000000..a6fbce76d9
+--- /dev/null
++++ b/dom/canvas/TegufoxGPUProfiles.h
+@@ -0,0 +1,79 @@
++/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#ifndef DOM_CANVAS_TEGUFOX_GPU_PROFILES_H_
++#define DOM_CANVAS_TEGUFOX_GPU_PROFILES_H_
++
++#include <string>
++#include <vector>
++#include <cstdint>
++
++namespace mozilla {
++namespace dom {
++
++/**
++ * TegufoxGPUProfile - Real GPU profile with consistent parameters
++ * 
++ * Ensures vendor, renderer, extensions, and capabilities are all consistent
++ * to prevent detection via WebGL fingerprinting inconsistencies.
++ */
++struct TegufoxGPUProfile {
++  std::string vendor;
++  std::string renderer;
++  std::vector<std::string> extensions;
++  
++  // WebGL capabilities
++  uint32_t maxTextureSize;
++  uint32_t maxCubeMapTextureSize;
++  uint32_t maxRenderBufferSize;
++  uint32_t maxVertexAttribs;
++  uint32_t maxTextureImageUnits;
++  uint32_t maxVertexTextureImageUnits;
++  uint32_t maxCombinedTextureImageUnits;
++  uint32_t maxFragmentUniformVectors;
++  uint32_t maxVertexUniformVectors;
++  uint32_t maxVaryingVectors;
++  
++  // Validation helpers
++  bool IsVendorMatch(const std::string& vendorQuery) const;
++  bool IsRendererMatch(const std::string& rendererQuery) const;
++  bool HasExtension(const std::string& extension) const;
++};
++
++/**
++ * TegufoxGPUProfiles - Database of real GPU profiles
++ * 
++ * Provides validation and lookup for consistent GPU fingerprints.
++ */
++class TegufoxGPUProfiles {
++ public:
++  // Find profile by vendor/renderer (partial match)
++  static const TegufoxGPUProfile* FindProfile(const std::string& vendor, 
++                                               const std::string& renderer);
++  
++  // Get random profile for fallback
++  static const TegufoxGPUProfile& GetRandomProfile();
++  
++  // Validate vendor-renderer consistency
++  static bool ValidateConsistency(const std::string& vendor, 
++                                  const std::string& renderer);
++  
++  // Get all profiles
++  static const std::vector<TegufoxGPUProfile>& GetAllProfiles();
++  
++ private:
++  // Lazy-initialized profile database
++  static const std::vector<TegufoxGPUProfile>& GetProfiles();
++  
++  // String matching helpers
++  static bool ContainsIgnoreCase(const std::string& haystack, 
++                                  const std::string& needle);
++  static std::string ToLower(const std::string& str);
++};
++
++}  // namespace dom
++}  // namespace mozilla
++
++#endif  // DOM_CANVAS_TEGUFOX_GPU_PROFILES_H_

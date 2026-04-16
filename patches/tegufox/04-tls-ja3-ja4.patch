@@ -1,0 +1,352 @@
+diff --git a/security/nss/lib/ssl/TegufoxTLSNoise.c b/security/nss/lib/ssl/TegufoxTLSNoise.c
+new file mode 100644
+index 0000000000..10863bdfbc
+--- /dev/null
++++ b/security/nss/lib/ssl/TegufoxTLSNoise.c
+@@ -0,0 +1,194 @@
++/* -*- Mode: C; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#include "TegufoxTLSNoise.h"
++#include <string.h>
++#include <ctype.h>
++
++/*
++ * XXH64 Hash Implementation (same as Canvas v2 and Audio patches)
++ * Fast, non-cryptographic hash for domain seeding
++ */
++
++/* XXH64 constants */
++#define XXH_PRIME64_1 0x9E3779B185EBCA87ULL
++#define XXH_PRIME64_2 0xC2B2AE3D27D4EB4FULL
++#define XXH_PRIME64_3 0x165667B19E3779F9ULL
++#define XXH_PRIME64_4 0x85EBCA77C2B2AE63ULL
++#define XXH_PRIME64_5 0x27D4EB2F165667C5ULL
++
++static uint64_t
++XXH_rotl64(uint64_t x, int r)
++{
++    return (x << r) | (x >> (64 - r));
++}
++
++static uint64_t
++XXH64_round(uint64_t acc, uint64_t input)
++{
++    acc += input * XXH_PRIME64_2;
++    acc = XXH_rotl64(acc, 31);
++    acc *= XXH_PRIME64_1;
++    return acc;
++}
++
++static uint64_t
++XXH64_mergeRound(uint64_t acc, uint64_t val)
++{
++    val = XXH64_round(0, val);
++    acc ^= val;
++    acc = acc * XXH_PRIME64_1 + XXH_PRIME64_4;
++    return acc;
++}
++
++static uint64_t
++XXH64(const void* input, size_t len, uint64_t seed)
++{
++    const uint8_t* p = (const uint8_t*)input;
++    const uint8_t* const bEnd = p + len;
++    uint64_t h64;
++
++    if (len >= 32) {
++        const uint8_t* const limit = bEnd - 32;
++        uint64_t v1 = seed + XXH_PRIME64_1 + XXH_PRIME64_2;
++        uint64_t v2 = seed + XXH_PRIME64_2;
++        uint64_t v3 = seed + 0;
++        uint64_t v4 = seed - XXH_PRIME64_1;
++
++        do {
++            v1 = XXH64_round(v1, *(const uint64_t*)p); p += 8;
++            v2 = XXH64_round(v2, *(const uint64_t*)p); p += 8;
++            v3 = XXH64_round(v3, *(const uint64_t*)p); p += 8;
++            v4 = XXH64_round(v4, *(const uint64_t*)p); p += 8;
++        } while (p <= limit);
++
++        h64 = XXH_rotl64(v1, 1) + XXH_rotl64(v2, 7) + 
++              XXH_rotl64(v3, 12) + XXH_rotl64(v4, 18);
++        h64 = XXH64_mergeRound(h64, v1);
++        h64 = XXH64_mergeRound(h64, v2);
++        h64 = XXH64_mergeRound(h64, v3);
++        h64 = XXH64_mergeRound(h64, v4);
++    } else {
++        h64 = seed + XXH_PRIME64_5;
++    }
++
++    h64 += (uint64_t)len;
++
++    while (p + 8 <= bEnd) {
++        uint64_t k1 = XXH64_round(0, *(const uint64_t*)p);
++        h64 ^= k1;
++        h64 = XXH_rotl64(h64, 27) * XXH_PRIME64_1 + XXH_PRIME64_4;
++        p += 8;
++    }
++
++    if (p + 4 <= bEnd) {
++        h64 ^= (uint64_t)(*(const uint32_t*)p) * XXH_PRIME64_1;
++        h64 = XXH_rotl64(h64, 23) * XXH_PRIME64_2 + XXH_PRIME64_3;
++        p += 4;
++    }
++
++    while (p < bEnd) {
++        h64 ^= (*p) * XXH_PRIME64_5;
++        h64 = XXH_rotl64(h64, 11) * XXH_PRIME64_1;
++        p++;
++    }
++
++    h64 ^= h64 >> 33;
++    h64 *= XXH_PRIME64_2;
++    h64 ^= h64 >> 29;
++    h64 *= XXH_PRIME64_3;
++    h64 ^= h64 >> 32;
++
++    return h64;
++}
++
++/*
++ * PCG Random Number Generator (XSH-RR variant)
++ * Better statistical properties than LCG
++ */
++static uint32_t
++PCG_Random(uint64_t* state)
++{
++    uint64_t oldState = *state;
++    *state = oldState * 6364136223846793005ULL + 1442695040888963407ULL;
++    uint32_t xorshifted = (uint32_t)(((oldState >> 18u) ^ oldState) >> 27u);
++    uint32_t rot = (uint32_t)(oldState >> 59u);
++    return (xorshifted >> rot) | (xorshifted << ((-rot) & 31));
++}
++
++/*
++ * TegufoxTLS Public API Implementation
++ */
++
++size_t
++TegufoxTLS_ExtractHostname(const char* url, size_t urlLen,
++                           char* hostname, size_t hostnameMaxLen)
++{
++    if (!url || urlLen == 0 || !hostname || hostnameMaxLen == 0) {
++        return 0;
++    }
++
++    const char* start = url;
++    const char* end = url + urlLen;
++
++    /* Skip protocol (http://, https://) */
++    const char* protocolEnd = strstr(url, "://");
++    if (protocolEnd && protocolEnd < end) {
++        start = protocolEnd + 3;
++    }
++
++    /* Find end of hostname (before port or path) */
++    const char* hostEnd = start;
++    while (hostEnd < end && *hostEnd != ':' && *hostEnd != '/' && *hostEnd != '?') {
++        hostEnd++;
++    }
++
++    size_t hostLen = hostEnd - start;
++    if (hostLen == 0 || hostLen >= hostnameMaxLen) {
++        return 0;
++    }
++
++    /* Copy hostname */
++    memcpy(hostname, start, hostLen);
++    hostname[hostLen] = '\0';
++
++    /* Convert to lowercase for consistency */
++    for (size_t i = 0; i < hostLen; i++) {
++        hostname[i] = tolower((unsigned char)hostname[i]);
++    }
++
++    return hostLen;
++}
++
++uint64_t
++TegufoxTLS_GenerateDomainSeed(const char* hostname, size_t hostnameLen)
++{
++    if (!hostname || hostnameLen == 0) {
++        return 0;
++    }
++
++    return XXH64(hostname, hostnameLen, 0);
++}
++
++void
++TegufoxTLS_ShuffleCipherOrder(unsigned int* indices, unsigned int count, uint64_t seed)
++{
++    if (!indices || count < 2 || seed == 0) {
++        return;
++    }
++
++    uint64_t rngState = seed;
++
++    /* Fisher-Yates shuffle (same algorithm Camoufox uses for extensions) */
++    for (unsigned int i = count - 1; i > 0; i--) {
++        uint32_t rand = PCG_Random(&rngState);
++        unsigned int j = rand % (i + 1);
++
++        /* Swap indices[i] and indices[j] */
++        unsigned int temp = indices[i];
++        indices[i] = indices[j];
++        indices[j] = temp;
++    }
++}
+diff --git a/security/nss/lib/ssl/TegufoxTLSNoise.h b/security/nss/lib/ssl/TegufoxTLSNoise.h
+new file mode 100644
+index 0000000000..9cfc4ed71c
+--- /dev/null
++++ b/security/nss/lib/ssl/TegufoxTLSNoise.h
+@@ -0,0 +1,73 @@
++/* -*- Mode: C; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/**
++ * TegufoxTLSNoise.h
++ * 
++ * Tegufox TLS JA3/JA4 Fingerprint Randomization
++ * 
++ * BUILDS ON TOP OF: Camoufox's extension permutation and GREASE support
++ * 
++ * Enhancements:
++ * 1. Domain-based cipher suite ordering (prevents cross-domain correlation)
++ * 2. Deterministic per-domain (same site = same order)
++ * 3. XXH64 domain hashing (consistent with Canvas v2 and Audio patches)
++ * 4. Fisher-Yates shuffle for cipher suite indices
++ * 
++ * Philosophy: Camoufox randomizes extensions and GREASE,
++ *             Tegufox adds domain-based cipher suite ordering on top.
++ */
++
++#ifndef tegufox_tls_noise_h__
++#define tegufox_tls_noise_h__
++
++#include <stdint.h>
++#include <stddef.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++/**
++ * Generate domain-based seed for cipher suite ordering
++ * Uses XXH64 hash of domain for deterministic seeding
++ * 
++ * @param hostname - Hostname string (e.g., "example.com")
++ * @param hostnameLen - Length of hostname string
++ * @return uint64_t seed for RNG initialization (0 if error)
++ */
++uint64_t
++TegufoxTLS_GenerateDomainSeed(const char* hostname, size_t hostnameLen);
++
++/**
++ * Shuffle cipher suite indices based on domain seed
++ * Uses Fisher-Yates shuffle with PCG random generator
++ * 
++ * @param indices - Array of cipher suite indices to shuffle (in-place)
++ * @param count - Number of indices in array
++ * @param seed - Random seed (from domain hash)
++ */
++void
++TegufoxTLS_ShuffleCipherOrder(unsigned int* indices, unsigned int count, uint64_t seed);
++
++/**
++ * Extract hostname from URL string
++ * Handles various URL formats (http://, https://, bare hostname)
++ * 
++ * @param url - Full URL or hostname
++ * @param urlLen - Length of URL string
++ * @param hostname - Output buffer for hostname (caller allocated)
++ * @param hostnameMaxLen - Size of hostname buffer
++ * @return size_t - Length of extracted hostname (0 if error)
++ */
++size_t
++TegufoxTLS_ExtractHostname(const char* url, size_t urlLen, 
++                           char* hostname, size_t hostnameMaxLen);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif /* tegufox_tls_noise_h__ */
+diff --git a/security/nss/lib/ssl/manifest.mn b/security/nss/lib/ssl/manifest.mn
+index cab4be6390..4bf9ff387c 100644
+--- a/security/nss/lib/ssl/manifest.mn
++++ b/security/nss/lib/ssl/manifest.mn
+@@ -64,6 +64,7 @@ CSRCS = \
+         tls13replay.c \
+         tls13signature.c \
+         tls13subcerts.c \
++        TegufoxTLSNoise.c \
+         $(NULL)
+ 
+ LIBRARY_NAME = ssl
+diff --git a/security/nss/lib/ssl/ssl.gyp b/security/nss/lib/ssl/ssl.gyp
+index 2d05a6a114..d530e7def1 100644
+--- a/security/nss/lib/ssl/ssl.gyp
++++ b/security/nss/lib/ssl/ssl.gyp
+@@ -53,6 +53,7 @@
+         'tls13replay.c',
+         'tls13signature.c',
+         'tls13subcerts.c',
++        'TegufoxTLSNoise.c',
+       ],
+       'conditions': [
+         [ 'OS=="win"', {
+diff --git a/security/nss/lib/ssl/ssl3con.c b/security/nss/lib/ssl/ssl3con.c
+index 173eca7b1f..a76f859f1c 100644
+--- a/security/nss/lib/ssl/ssl3con.c
++++ b/security/nss/lib/ssl/ssl3con.c
+@@ -36,6 +36,7 @@
+ #include "pk11func.h"
+ #include "secmod.h"
+ #include "blapi.h"
++#include "TegufoxTLSNoise.h"
+ 
+ #include <limits.h>
+ #include <stdio.h>
+@@ -5337,8 +5338,35 @@ ssl3_AppendCipherSuites(sslSocket *ss, PRBool fallbackSCSV, sslBuffer *buf)
+     }
+ 
+     saveLen = SSL_BUFFER_LEN(buf);
+-    /* CipherSuites are appended to Hello message here */
++    
++    /* TEGUFOX: Domain-based cipher suite ordering
++     * Creates deterministic-per-domain cipher order to prevent JA3 correlation */
++    unsigned int shuffledIndices[ssl_V3_SUITES_IMPLEMENTED];
++    PRBool useTegufoxShuffle = PR_FALSE;
++    
++    /* Initialize indices array with sequential order */
+     for (i = 0; i < ssl_V3_SUITES_IMPLEMENTED; i++) {
++        shuffledIndices[i] = i;
++    }
++    
++    /* Apply domain-based shuffle if URL is available */
++    if (ss->url != NULL && strlen(ss->url) > 0) {
++        char hostname[256];
++        size_t hostnameLen = TegufoxTLS_ExtractHostname(ss->url, strlen(ss->url),
++                                                        hostname, sizeof(hostname));
++        if (hostnameLen > 0) {
++            uint64_t domainSeed = TegufoxTLS_GenerateDomainSeed(hostname, hostnameLen);
++            if (domainSeed != 0) {
++                TegufoxTLS_ShuffleCipherOrder(shuffledIndices, ssl_V3_SUITES_IMPLEMENTED, domainSeed);
++                useTegufoxShuffle = PR_TRUE;
++            }
++        }
++    }
++    
++    /* CipherSuites are appended to Hello message here */
++    /* Use shuffled order if Tegufox domain-based ordering is enabled */
++    for (unsigned int j = 0; j < ssl_V3_SUITES_IMPLEMENTED; j++) {
++        i = useTegufoxShuffle ? shuffledIndices[j] : j;
+         ssl3CipherSuiteCfg *suite = &ss->cipherSuites[i];
+         if (ssl3_config_match(suite, ss->ssl3.policy, &ss->vrange, ss)) {
+             rv = sslBuffer_AppendNumber(buf, suite->cipher_suite,

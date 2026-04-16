@@ -1,0 +1,456 @@
+diff --git a/gfx/thebes/TegufoxFontNoise.cpp b/gfx/thebes/TegufoxFontNoise.cpp
+new file mode 100644
+index 0000000000..478fbe5692
+--- /dev/null
++++ b/gfx/thebes/TegufoxFontNoise.cpp
+@@ -0,0 +1,294 @@
++/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#include "TegufoxFontNoise.h"
++
++#include <cstring>
++
++namespace mozilla {
++namespace gfx {
++
++// XXH64 constants (same as TegufoxCanvasNoise and TegufoxTLSNoise)
++static constexpr uint64_t PRIME64_1 = 0x9E3779B185EBCA87ULL;
++static constexpr uint64_t PRIME64_2 = 0xC2B2AE3D27D4EB4FULL;
++static constexpr uint64_t PRIME64_3 = 0x165667B19E3779F9ULL;
++static constexpr uint64_t PRIME64_4 = 0x85EBCA77C2B2AE63ULL;
++static constexpr uint64_t PRIME64_5 = 0x27D4EB2F165667C5ULL;
++
++static inline uint64_t XXH_rotl64(uint64_t x, int r) {
++  return (x << r) | (x >> (64 - r));
++}
++
++uint64_t TegufoxFontNoise::XXH64(const char* data, size_t len, uint64_t seed) {
++  uint64_t h64;
++
++  if (len >= 32) {
++    uint64_t v1 = seed + PRIME64_1 + PRIME64_2;
++    uint64_t v2 = seed + PRIME64_2;
++    uint64_t v3 = seed + 0;
++    uint64_t v4 = seed - PRIME64_1;
++
++    const char* end = data + len;
++    const char* limit = end - 32;
++
++    do {
++      uint64_t k1;
++      memcpy(&k1, data, sizeof(k1));
++      v1 += k1 * PRIME64_2;
++      v1 = XXH_rotl64(v1, 31) * PRIME64_1;
++      data += 8;
++
++      uint64_t k2;
++      memcpy(&k2, data, sizeof(k2));
++      v2 += k2 * PRIME64_2;
++      v2 = XXH_rotl64(v2, 31) * PRIME64_1;
++      data += 8;
++
++      uint64_t k3;
++      memcpy(&k3, data, sizeof(k3));
++      v3 += k3 * PRIME64_2;
++      v3 = XXH_rotl64(v3, 31) * PRIME64_1;
++      data += 8;
++
++      uint64_t k4;
++      memcpy(&k4, data, sizeof(k4));
++      v4 += k4 * PRIME64_2;
++      v4 = XXH_rotl64(v4, 31) * PRIME64_1;
++      data += 8;
++    } while (data <= limit);
++
++    h64 = XXH_rotl64(v1, 1) + XXH_rotl64(v2, 7) + XXH_rotl64(v3, 12) +
++          XXH_rotl64(v4, 18);
++
++    v1 *= PRIME64_2;
++    v1 = XXH_rotl64(v1, 31) * PRIME64_1;
++    h64 ^= v1;
++    h64 = h64 * PRIME64_1 + PRIME64_4;
++
++    v2 *= PRIME64_2;
++    v2 = XXH_rotl64(v2, 31) * PRIME64_1;
++    h64 ^= v2;
++    h64 = h64 * PRIME64_1 + PRIME64_4;
++
++    v3 *= PRIME64_2;
++    v3 = XXH_rotl64(v3, 31) * PRIME64_1;
++    h64 ^= v3;
++    h64 = h64 * PRIME64_1 + PRIME64_4;
++
++    v4 *= PRIME64_2;
++    v4 = XXH_rotl64(v4, 31) * PRIME64_1;
++    h64 ^= v4;
++    h64 = h64 * PRIME64_1 + PRIME64_4;
++
++  } else {
++    h64 = seed + PRIME64_5;
++  }
++
++  h64 += len;
++
++  // Process remaining bytes
++  const char* end = data + (len >= 32 ? len % 32 : len);
++  // Handle remaining 8-byte blocks
++  while (data + 8 <= end) {
++    uint64_t k1;
++    memcpy(&k1, data, sizeof(k1));
++    k1 *= PRIME64_2;
++    k1 = XXH_rotl64(k1, 31) * PRIME64_1;
++    h64 ^= k1;
++    h64 = XXH_rotl64(h64, 27) * PRIME64_1 + PRIME64_4;
++    data += 8;
++  }
++  // Handle remaining 4-byte block
++  if (data + 4 <= end) {
++    uint32_t k1;
++    memcpy(&k1, data, sizeof(k1));
++    h64 ^= static_cast<uint64_t>(k1) * PRIME64_1;
++    h64 = XXH_rotl64(h64, 23) * PRIME64_2 + PRIME64_3;
++    data += 4;
++  }
++  // Handle remaining bytes
++  while (data < end) {
++    h64 ^= static_cast<uint64_t>(static_cast<uint8_t>(*data)) * PRIME64_5;
++    h64 = XXH_rotl64(h64, 11) * PRIME64_1;
++    data++;
++  }
++
++  // Finalization
++  h64 ^= h64 >> 33;
++  h64 *= PRIME64_2;
++  h64 ^= h64 >> 29;
++  h64 *= PRIME64_3;
++  h64 ^= h64 >> 32;
++
++  return h64;
++}
++
++// PCG-XSH-RR implementation (same algorithm as TLS patch)
++TegufoxFontNoise::PCGState TegufoxFontNoise::PCG_Init(uint64_t seed) {
++  PCGState rng;
++  rng.state = 0;
++  rng.inc = (seed << 1u) | 1u;
++  PCG_Random(rng);  // Advance once to initialize
++  rng.state += seed;
++  PCG_Random(rng);  // Advance again
++  return rng;
++}
++
++uint32_t TegufoxFontNoise::PCG_Random(PCGState& rng) {
++  uint64_t oldstate = rng.state;
++  rng.state = oldstate * 6364136223846793005ULL + rng.inc;
++  uint32_t xorshifted = static_cast<uint32_t>(((oldstate >> 18u) ^ oldstate) >> 27u);
++  uint32_t rot = static_cast<uint32_t>(oldstate >> 59u);
++  return (xorshifted >> rot) | (xorshifted << ((-rot) & 31));
++}
++
++double TegufoxFontNoise::NoiseInRange(PCGState& rng, double range) {
++  // Generate a float in [-range, +range] from PCG output
++  uint32_t r = PCG_Random(rng);
++  // Map [0, UINT32_MAX] to [-range, +range]
++  double normalized = (static_cast<double>(r) / 4294967295.0) * 2.0 - 1.0;
++  return normalized * range;
++}
++
++uint64_t TegufoxFontNoise::GenerateCombinedSeed(const char* aDomain,
++                                                 size_t aDomainLen,
++                                                 const char* aFontName,
++                                                 size_t aFontNameLen) {
++  // Combine domain and font name into a single buffer for hashing
++  // This ensures different fonts on the same domain get different noise,
++  // and the same font on different domains gets different noise.
++  //
++  // Use a simple concatenation with a separator byte (0xFF) to prevent
++  // collisions between domain+fontname combinations.
++  constexpr size_t kMaxBufLen = 512;
++  char buf[kMaxBufLen];
++
++  size_t totalLen = aDomainLen + 1 + aFontNameLen;  // domain + separator + font
++  if (totalLen > kMaxBufLen) {
++    totalLen = kMaxBufLen;
++  }
++
++  size_t domainCopy = aDomainLen;
++  if (domainCopy > kMaxBufLen - 1) {
++    domainCopy = kMaxBufLen - 1;
++  }
++  memcpy(buf, aDomain, domainCopy);
++  buf[domainCopy] = '\xFF';  // separator
++
++  size_t fontCopy = aFontNameLen;
++  if (domainCopy + 1 + fontCopy > kMaxBufLen) {
++    fontCopy = kMaxBufLen - domainCopy - 1;
++  }
++  if (fontCopy > 0) {
++    memcpy(buf + domainCopy + 1, aFontName, fontCopy);
++  }
++
++  totalLen = domainCopy + 1 + fontCopy;
++
++  // Use a distinct seed constant for font metrics (different from canvas/audio/TLS)
++  return XXH64(buf, totalLen, 0x544547554E4F4953ULL);  // "TEGUNOIS" in hex
++}
++
++void TegufoxFontNoise::PerturbMetrics(gfxFont::Metrics& m,
++                                       const char* aDomain, size_t aDomainLen,
++                                       const char* aFontName,
++                                       size_t aFontNameLen) {
++  // Skip if no domain provided
++  if (!aDomain || aDomainLen == 0) {
++    return;
++  }
++
++  uint64_t seed = GenerateCombinedSeed(aDomain, aDomainLen, aFontName,
++                                        aFontNameLen);
++  if (seed == 0) {
++    return;
++  }
++
++  PCGState rng = PCG_Init(seed);
++
++  // Apply subtle noise to each metric field.
++  // Noise ranges are calibrated to be:
++  //   - Visually imperceptible at typical font sizes (12-24px)
++  //   - Measurably different across domains via JavaScript
++  //   - Small enough to not break CSS layouts
++
++  // Height/ascent/descent metrics: ±0.3px noise
++  // These affect fontBoundingBox in TextMetrics and line height calculations
++  double ascentNoise = NoiseInRange(rng, 0.3);
++  double descentNoise = NoiseInRange(rng, 0.3);
++  m.maxAscent += ascentNoise;
++  m.maxDescent += descentNoise;
++  // Maintain consistency: maxHeight = maxAscent + maxDescent
++  m.maxHeight = m.maxAscent + m.maxDescent;
++
++  // em metrics: ±0.2px noise
++  double emAscentNoise = NoiseInRange(rng, 0.2);
++  m.emAscent += emAscentNoise;
++  // Maintain consistency: emDescent = emHeight - emAscent
++  m.emDescent = m.emHeight - m.emAscent;
++
++  // x-height and cap-height: ±0.25px noise (affects CSS 'ex' and 'cap' units)
++  m.xHeight += NoiseInRange(rng, 0.25);
++  m.capHeight += NoiseInRange(rng, 0.25);
++
++  // Character width metrics: ±0.15px noise (affects CSS 'ch' unit)
++  m.aveCharWidth += NoiseInRange(rng, 0.15);
++  m.spaceWidth += NoiseInRange(rng, 0.15);
++
++  // Zero width: ±0.15px noise (directly used for CSS 'ch' unit)
++  // Only perturb if valid (not -1)
++  if (m.zeroWidth >= 0) {
++    m.zeroWidth += NoiseInRange(rng, 0.15);
++  }
++
++  // Ideographic width: ±0.2px noise (affects CSS 'ic' unit)
++  // Only perturb if valid (not -1)
++  if (m.ideographicWidth >= 0) {
++    m.ideographicWidth += NoiseInRange(rng, 0.2);
++  }
++
++  // Decoration metrics: ±0.1px noise (strikeout, underline)
++  m.strikeoutSize += NoiseInRange(rng, 0.1);
++  m.strikeoutOffset += NoiseInRange(rng, 0.1);
++  m.underlineSize += NoiseInRange(rng, 0.1);
++  m.underlineOffset += NoiseInRange(rng, 0.1);
++
++  // Leading metrics: ±0.1px noise
++  m.internalLeading += NoiseInRange(rng, 0.1);
++  m.externalLeading += NoiseInRange(rng, 0.1);
++
++  // Max advance: ±0.15px noise
++  m.maxAdvance += NoiseInRange(rng, 0.15);
++}
++
++void TegufoxFontNoise::PerturbBaselines(gfxFont::Baselines& b,
++                                         const char* aDomain,
++                                         size_t aDomainLen,
++                                         const char* aFontName,
++                                         size_t aFontNameLen) {
++  if (!aDomain || aDomainLen == 0) {
++    return;
++  }
++
++  // Use a slightly different seed offset so baselines noise is independent
++  // of metrics noise but still deterministic per domain+font
++  uint64_t seed = GenerateCombinedSeed(aDomain, aDomainLen, aFontName,
++                                        aFontNameLen);
++  // XOR with a constant to get different sequence from PerturbMetrics
++  seed ^= 0x4241534531323334ULL;  // "BASE1234"
++  if (seed == 0) {
++    seed = 1;
++  }
++
++  PCGState rng = PCG_Init(seed);
++
++  // Baseline noise: ±0.15px for alphabetic, ±0.2px for hanging/ideographic
++  b.mAlphabetic += NoiseInRange(rng, 0.15);
++  b.mHanging += NoiseInRange(rng, 0.2);
++  b.mIdeographic += NoiseInRange(rng, 0.2);
++}
++
++}  // namespace gfx
++}  // namespace mozilla
+diff --git a/gfx/thebes/TegufoxFontNoise.h b/gfx/thebes/TegufoxFontNoise.h
+new file mode 100644
+index 0000000000..69cbcfbca2
+--- /dev/null
++++ b/gfx/thebes/TegufoxFontNoise.h
+@@ -0,0 +1,89 @@
++/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++/*
++ * Tegufox Font Metrics v2: Per-domain deterministic font metrics perturbation
++ *
++ * Algorithm:
++ *   1. Compute seed = XXH64(domain + fontName)
++ *   2. Use PCG-XSH-RR RNG to generate per-field noise
++ *   3. Apply subtle noise to Metrics struct (±0.3px range)
++ *   4. Apply subtle noise to Baselines struct (±0.2px range)
++ *   5. Maintain internal consistency (maxHeight = maxAscent + maxDescent)
++ *
++ * Injection points:
++ *   - Canvas measureText() TextMetrics construction
++ *   - CSS ex/ch/cap/ic unit resolution via Gecko_GetFontMetrics
++ *
++ * Author: Tegufox Browser Toolkit
++ * Date: April 15, 2026
++ */
++
++#ifndef GFX_THEBES_TEGUFOX_FONT_NOISE_H_
++#define GFX_THEBES_TEGUFOX_FONT_NOISE_H_
++
++#include "gfxFont.h"
++
++namespace mozilla {
++namespace gfx {
++
++class TegufoxFontNoise {
++ public:
++  /**
++   * Apply domain-seeded noise to a copy of font Metrics.
++   * The original Metrics struct is not modified.
++   *
++   * @param aMetrics - Copy of font metrics to perturb (modified in place)
++   * @param aDomain - Domain string for seed generation (UTF-8)
++   * @param aDomainLen - Length of domain string
++   * @param aFontName - Font family name for additional seed entropy (UTF-8)
++   * @param aFontNameLen - Length of font name string
++   */
++  static void PerturbMetrics(gfxFont::Metrics& aMetrics,
++                             const char* aDomain, size_t aDomainLen,
++                             const char* aFontName, size_t aFontNameLen);
++
++  /**
++   * Apply domain-seeded noise to a copy of font Baselines.
++   * Uses the same seed derivation as PerturbMetrics for consistency.
++   *
++   * @param aBaselines - Copy of baselines to perturb (modified in place)
++   * @param aDomain - Domain string for seed generation (UTF-8)
++   * @param aDomainLen - Length of domain string
++   * @param aFontName - Font family name for additional seed entropy (UTF-8)
++   * @param aFontNameLen - Length of font name string
++   */
++  static void PerturbBaselines(gfxFont::Baselines& aBaselines,
++                               const char* aDomain, size_t aDomainLen,
++                               const char* aFontName, size_t aFontNameLen);
++
++ private:
++  // XXH64 hash for seed generation
++  static uint64_t XXH64(const char* data, size_t len, uint64_t seed);
++
++  // PCG-XSH-RR random number generator
++  struct PCGState {
++    uint64_t state;
++    uint64_t inc;
++  };
++  static uint32_t PCG_Random(PCGState& rng);
++  static PCGState PCG_Init(uint64_t seed);
++
++  // Generate a small float noise in [-range, +range]
++  static double NoiseInRange(PCGState& rng, double range);
++
++  // Combine domain and font name into a single seed
++  static uint64_t GenerateCombinedSeed(const char* aDomain, size_t aDomainLen,
++                                       const char* aFontName,
++                                       size_t aFontNameLen);
++
++  TegufoxFontNoise() = delete;
++  ~TegufoxFontNoise() = delete;
++};
++
++}  // namespace gfx
++}  // namespace mozilla
++
++#endif  // GFX_THEBES_TEGUFOX_FONT_NOISE_H_
+diff --git a/gfx/thebes/moz.build b/gfx/thebes/moz.build
+index 7efb2bb8f7..c8320a07fe 100644
+--- a/gfx/thebes/moz.build
++++ b/gfx/thebes/moz.build
+@@ -62,6 +62,7 @@ EXPORTS += [
+     "gfxUtils.h",
+     "SharedFontList.h",
+     "SoftwareVsyncSource.h",
++    "TegufoxFontNoise.h",
+     "ThebesRLBoxTypes.h",
+     "VsyncSource.h",
+ ]
+@@ -230,6 +231,7 @@ UNIFIED_SOURCES += [
+     "gfxUtils.cpp",
+     "SharedFontList.cpp",
+     "SoftwareVsyncSource.cpp",
++    "TegufoxFontNoise.cpp",
+     "VsyncSource.cpp",
+ ]
+ 
+diff --git a/layout/style/GeckoBindings.cpp b/layout/style/GeckoBindings.cpp
+index 052eecf0a1..dbb5f0a5c5 100644
+--- a/layout/style/GeckoBindings.cpp
++++ b/layout/style/GeckoBindings.cpp
+@@ -14,6 +14,7 @@
+ #include "gfxFontFeatures.h"
+ #include "gfxMathTable.h"
+ #include "gfxTextRun.h"
++#include "TegufoxFontNoise.h"   // Tegufox Font Metrics v2
+ #include "imgLoader.h"
+ #include "mozilla/AttributeStyles.h"
+ #include "mozilla/ClearOnShutdown.h"
+@@ -1314,6 +1315,28 @@ GeckoFontMetrics Gecko_GetFontMetrics(const nsPresContext* aPresContext,
+   auto* fontGroup = fm->GetThebesFontGroup();
+   auto metrics = fontGroup->GetMetricsForCSSUnits(fm->Orientation(), flags);
+ 
++  // Tegufox Font Metrics v2: Apply domain-seeded noise to CSS unit metrics
++  if (aPresContext) {
++    mozilla::dom::Document* doc =
++        const_cast<nsPresContext*>(aPresContext)->Document();
++    if (doc) {
++      nsIURI* uri = doc->GetDocumentURI();
++      if (uri) {
++        nsAutoCString host;
++        nsresult rv = uri->GetHost(host);
++        if (NS_SUCCEEDED(rv) && !host.IsEmpty()) {
++          RefPtr<gfxFont> firstFont = fontGroup->GetFirstValidFont();
++          const nsCString& fontName =
++              firstFont->GetFontEntry()->FamilyName();
++
++          mozilla::gfx::TegufoxFontNoise::PerturbMetrics(
++              metrics, host.get(), host.Length(),
++              fontName.get(), fontName.Length());
++        }
++      }
++    }
++  }
++
+   float scriptPercentScaleDown = 0;
+   float scriptScriptPercentScaleDown = 0;
+   if (flags & StyleQueryFontMetricsFlags::NEEDS_MATH_SCALES) {

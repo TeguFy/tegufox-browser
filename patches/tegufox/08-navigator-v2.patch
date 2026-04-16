@@ -1,0 +1,87 @@
+diff --git a/dom/base/Navigator.cpp b/dom/base/Navigator.cpp
+index 4720feb7df..4f1d80e60c 100644
+--- a/dom/base/Navigator.cpp
++++ b/dom/base/Navigator.cpp
+@@ -551,7 +551,15 @@ void Navigator::GetOscpu(nsAString& aOSCPU, CallerType aCallerType,
+   CopyASCIItoUTF16(oscpu, aOSCPU);
+ }
+ 
+-void Navigator::GetVendor(nsAString& aVendor) { aVendor.Truncate(); }
++void Navigator::GetVendor(nsAString& aVendor) {
++  // Tegufox: configurable vendor string
++  // Firefox default: "" (empty), Chrome: "Google Inc.", Safari: "Apple Computer, Inc."
++  if (auto value = MaskConfig::GetString("navigator.vendor")) {
++    aVendor.Assign(NS_ConvertUTF8toUTF16(value.value()));
++    return;
++  }
++  aVendor.Truncate();
++}
+ 
+ void Navigator::GetVendorSub(nsAString& aVendorSub) { aVendorSub.Truncate(); }
+ 
+@@ -585,7 +593,13 @@ nsPluginArray* Navigator::GetPlugins(ErrorResult& aRv) {
+   return mPlugins;
+ }
+ 
+-bool Navigator::PdfViewerEnabled() { return !StaticPrefs::pdfjs_disabled(); }
++bool Navigator::PdfViewerEnabled() {
++  // Tegufox: MaskConfig override for pdfViewerEnabled
++  if (auto value = MaskConfig::GetBool("navigator.pdfViewerEnabled")) {
++    return value.value();
++  }
++  return !StaticPrefs::pdfjs_disabled();
++}
+ 
+ Permissions* Navigator::GetPermissions(ErrorResult& aRv) {
+   if (!mWindow) {
+@@ -675,6 +689,13 @@ bool Navigator::OnLine() {
+ 
+ void Navigator::GetBuildID(nsAString& aBuildID, CallerType aCallerType,
+                            ErrorResult& aRv) const {
++  // Tegufox: MaskConfig override for buildID
++  // Firefox exposes buildID which leaks browser identity; Chrome doesn't have it
++  if (auto value = MaskConfig::GetString("navigator.buildID")) {
++    aBuildID.Assign(NS_ConvertUTF8toUTF16(value.value()));
++    return;
++  }
++
+   if (aCallerType != CallerType::System) {
+     // If fingerprinting resistance is on, we will spoof this value. See
+     // nsRFPService.h for details about spoofed values.
+@@ -732,6 +753,12 @@ void Navigator::GetBuildID(nsAString& aBuildID, CallerType aCallerType,
+ }
+ 
+ void Navigator::GetDoNotTrack(nsAString& aResult) {
++  // Tegufox: MaskConfig override for doNotTrack
++  // Values: "1" (enabled), "0" (disabled), "unspecified"
++  if (auto value = MaskConfig::GetString("navigator.doNotTrack")) {
++    aResult.Assign(NS_ConvertUTF8toUTF16(value.value()));
++    return;
++  }
+   if (StaticPrefs::privacy_donottrackheader_enabled()) {
+     aResult.AssignLiteral("1");
+   } else {
+@@ -740,6 +767,10 @@ void Navigator::GetDoNotTrack(nsAString& aResult) {
+ }
+ 
+ bool Navigator::GlobalPrivacyControl() {
++  // Tegufox: MaskConfig override for globalPrivacyControl (parity with WorkerNavigator)
++  if (auto value = MaskConfig::GetBool("navigator.globalPrivacyControl")) {
++    return value.value();
++  }
+   bool gpcStatus = StaticPrefs::privacy_globalprivacycontrol_enabled();
+   if (!gpcStatus) {
+     nsCOMPtr<nsILoadContext> loadContext = do_GetInterface(mWindow);
+@@ -967,6 +998,12 @@ bool Navigator::Vibrate(const nsTArray<uint32_t>& aPattern) {
+ //*****************************************************************************
+ 
+ uint32_t Navigator::MaxTouchPoints(CallerType aCallerType) {
++  // Tegufox: MaskConfig override for maxTouchPoints
++  // Essential for mobile profile emulation (e.g., Chrome Android returns 5)
++  if (auto value = MaskConfig::GetUint32("navigator.maxTouchPoints")) {
++    return value.value();
++  }
++
+   nsIDocShell* docshell = GetDocShell();
+   BrowsingContext* bc = docshell ? docshell->GetBrowsingContext() : nullptr;
+ 

@@ -1,0 +1,146 @@
+diff --git a/dom/media/webrtc/jsep/JsepSessionImpl.cpp b/dom/media/webrtc/jsep/JsepSessionImpl.cpp
+index a7a59f9d0e..d705236963 100644
+--- a/dom/media/webrtc/jsep/JsepSessionImpl.cpp
++++ b/dom/media/webrtc/jsep/JsepSessionImpl.cpp
+@@ -2092,7 +2092,10 @@ nsresult JsepSessionImpl::CreateGenericSDP(UniquePtr<Sdp>* sdpp) {
+   // "SDPARTA-", but that becomes a problem starting with version 100, since
+   // some services parse 100 as "10" and give us legacy/broken behavior. So
+   // we're freezing the version number at 99.0 in this string.
+-  auto origin = SdpOrigin("mozilla...THIS_IS_SDPARTA-99.0", mSessionId,
++  /* TEGUFOX: Anonymize SDP origin username to prevent browser brand identification.
++   * Original: "mozilla...THIS_IS_SDPARTA-99.0" - uniquely identifies Firefox.
++   * Changed to "-" which matches the RFC recommendation and Chrome's behavior. */
++  auto origin = SdpOrigin("-", mSessionId,
+                           mSessionVersion, sdp::kIPv4, "0.0.0.0");
+ 
+   UniquePtr<Sdp> sdp = MakeUnique<SipccSdp>(origin);
+@@ -2139,9 +2142,23 @@ nsresult JsepSessionImpl::SetupIds() {
+     return NS_ERROR_FAILURE;
+   }
+ 
+-  if (!mUuidGen->Generate(&mCNAME)) {
+-    JSEP_SET_ERROR("Failed to generate CNAME");
+-    return NS_ERROR_FAILURE;
++  /* TEGUFOX: Generate CNAME as random alphanumeric string instead of UUID.
++   * Firefox uses UUID format (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) which
++   * is a browser-brand fingerprint. Chrome uses shorter random strings.
++   * We generate a 16-char alphanumeric CNAME instead. */
++  {
++    unsigned char cnameBytes[12];
++    rv = PK11_GenerateRandom(cnameBytes, sizeof(cnameBytes));
++    if (rv != SECSuccess) {
++      JSEP_SET_ERROR("Failed to generate CNAME");
++      return NS_ERROR_FAILURE;
++    }
++    static const char kAlphabet[] =
++        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
++    mCNAME.clear();
++    for (size_t i = 0; i < sizeof(cnameBytes); i++) {
++      mCNAME += kAlphabet[cnameBytes[i] % 64];
++    }
+   }
+ 
+   return NS_OK;
+diff --git a/dom/media/webrtc/transport/third_party/nICEr/src/ice/ice_candidate.c b/dom/media/webrtc/transport/third_party/nICEr/src/ice/ice_candidate.c
+index 2146bded38..1dff0c4b3a 100644
+--- a/dom/media/webrtc/transport/third_party/nICEr/src/ice/ice_candidate.c
++++ b/dom/media/webrtc/transport/third_party/nICEr/src/ice/ice_candidate.c
+@@ -385,7 +385,15 @@ static int nr_ice_get_foundation(nr_ice_ctx *ctx,nr_ice_candidate *cand)
+           goto next;
+       }
+ 
+-      snprintf(fnd,sizeof(fnd),"%d",i);
++      /* TEGUFOX: Use obfuscated foundation instead of sequential index.
++       * Sequential integers ("0","1","2") reveal the number of unique
++       * base addresses/types = network interface topology.
++       * Use a hash-based 8-char hex string instead: deterministic but opaque. */
++      {
++        unsigned int hash = (unsigned int)(i * 2654435761u);
++        hash ^= (unsigned int)cand->type * 0x9e3779b9u;
++        snprintf(fnd,sizeof(fnd),"%08x",hash);
++      }
+       if(!(cand->foundation=r_strdup(fnd)))
+         ABORT(R_NO_MEMORY);
+       return(0);
+@@ -404,7 +412,12 @@ static int nr_ice_get_foundation(nr_ice_ctx *ctx,nr_ice_candidate *cand)
+     }
+     STAILQ_INSERT_TAIL(&ctx->foundations,foundation,entry);
+ 
+-    snprintf(fnd,sizeof(fnd),"%d",i);
++    /* TEGUFOX: Same obfuscation for newly allocated foundations */
++    {
++      unsigned int hash = (unsigned int)(i * 2654435761u);
++      hash ^= (unsigned int)cand->type * 0x9e3779b9u;
++      snprintf(fnd,sizeof(fnd),"%08x",hash);
++    }
+     if(!(cand->foundation=r_strdup(fnd)))
+       ABORT(R_NO_MEMORY);
+ 
+@@ -550,6 +563,17 @@ int nr_ice_candidate_compute_priority(nr_ice_candidate *cand)
+     assert(stun_priority < 32);
+     assert(direction_priority < 8);
+ 
++    /* TEGUFOX: Normalize interface_preference to prevent NIC topology leakage.
++     * Original value encodes per-interface ordering (decrements for each NIC)
++     * and reveals IPv4/v6 presence per interface. Replace with a fixed value
++     * that simulates a single-interface machine.
++     * Use 254 for IPv6, 253 for IPv4 (matches typical Chrome single-NIC behavior). */
++    if (cand->base.ip_version == NR_IPV6) {
++      interface_preference = 254;
++    } else {
++      interface_preference = 253;
++    }
++
+     cand->priority=
+       (type_preference << 24) |
+       (interface_preference << 16) |
+diff --git a/dom/media/webrtc/transport/third_party/nICEr/src/ice/ice_ctx.c b/dom/media/webrtc/transport/third_party/nICEr/src/ice/ice_ctx.c
+index 29e36a8483..acff6d51c9 100644
+--- a/dom/media/webrtc/transport/third_party/nICEr/src/ice/ice_ctx.c
++++ b/dom/media/webrtc/transport/third_party/nICEr/src/ice/ice_ctx.c
+@@ -53,8 +53,12 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ #include "addrs.h"
+ #include "nr_socket_local.h"
+ 
++/* TEGUFOX: Adjusted ICE credential lengths and charset.
++ * Firefox default: 8-char hex ufrag / 32-char hex pwd (strong browser-brand fingerprint).
++ * Chrome uses: 4-char alphanumeric ufrag / 22-char alphanumeric pwd.
++ * We use: 8-char alphanumeric (keeps security, changes charset to reduce fingerprint). */
+ #define ICE_UFRAG_LEN 8
+-#define ICE_PWD_LEN 32
++#define ICE_PWD_LEN 24
+ 
+ int LOG_ICE = 0;
+ 
+@@ -959,19 +963,24 @@ int nr_ice_get_global_attributes(nr_ice_ctx *ctx,char ***attrsp, int *attrctp)
+ static int nr_ice_random_string(char *str, int len)
+   {
+     unsigned char bytes[100];
+-    size_t needed;
+     int r,_status;
+ 
+-    if(len%2) ABORT(R_BAD_ARGS);
+-    needed=len/2;
++    /* TEGUFOX: Use alphanumeric charset instead of hex.
++     * Firefox default: hex only [0-9a-f] - browser-brand fingerprint.
++     * Chrome uses: alphanumeric + symbols [A-Za-z0-9+/].
++     * We generate len random bytes and map each to alphanumeric charset. */
++    static const char kAlphabet[] =
++        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+ 
+-    if(needed>sizeof(bytes)) ABORT(R_BAD_ARGS);
++    if(len > (int)sizeof(bytes)) ABORT(R_BAD_ARGS);
+ 
+-    if(r=nr_crypto_random_bytes(bytes,needed))
++    if(r=nr_crypto_random_bytes(bytes,len))
+       ABORT(r);
+ 
+-    if(r=nr_bin2hex(bytes,needed,(unsigned char *)str))
+-      ABORT(r);
++    for(int i = 0; i < len; i++) {
++      str[i] = kAlphabet[bytes[i] % 64];
++    }
++    str[len] = '\0';
+ 
+     _status=0;
+   abort:

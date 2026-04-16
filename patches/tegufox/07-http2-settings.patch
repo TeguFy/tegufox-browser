@@ -1,0 +1,310 @@
+diff --git a/netwerk/protocol/http/Http2Compression.cpp b/netwerk/protocol/http/Http2Compression.cpp
+index 5926284749..f4b1ee35bb 100644
+--- a/netwerk/protocol/http/Http2Compression.cpp
++++ b/netwerk/protocol/http/Http2Compression.cpp
+@@ -16,6 +16,7 @@
+ #include "Http2Compression.h"
+ #include "Http2HuffmanIncoming.h"
+ #include "Http2HuffmanOutgoing.h"
++#include "MaskConfig.hpp"  // Tegufox HTTP/2 pseudo-header order
+ #include "mozilla/StaticPtr.h"
+ #include "mozilla/glean/NetwerkProtocolHttpMetrics.h"
+ #include "nsCharSeparatedTokenizer.h"
+@@ -1051,11 +1052,58 @@ nsresult Http2Compressor::EncodeHeaderBlock(
+   }
+ 
+   // colon headers first
++  // Tegufox: configurable pseudo-header order via http2:pseudo_header_order
++  // Default Firefox order: "m,p,a,s" (method, path, authority, scheme)
++  // Chrome order example:  "m,a,s,p" (method, authority, scheme, path)
+   if (!simpleConnectForm) {
+-    ProcessHeader(nvPair(":method"_ns, method), false, false);
+-    ProcessHeader(nvPair(":path"_ns, path), true, false);
+-    ProcessHeader(nvPair(":authority"_ns, host), false, false);
+-    ProcessHeader(nvPair(":scheme"_ns, scheme), false, false);
++    auto pseudoOrder = MaskConfig::GetString("http2:pseudo_header_order");
++    if (pseudoOrder) {
++      // Parse comma-separated order string (e.g., "m,a,s,p")
++      nsAutoCString orderStr(pseudoOrder.value().c_str());
++      bool sentMethod = false, sentPath = false, sentAuthority = false,
++           sentScheme = false;
++      int32_t start = 0;
++      int32_t commaPos;
++      while (start < (int32_t)orderStr.Length()) {
++        commaPos = orderStr.Find(",", start);
++        int32_t end = (commaPos == -1) ? (int32_t)orderStr.Length() : commaPos;
++        nsAutoCString token;
++        token.Assign(Substring(orderStr, start, end - start));
++        token.StripWhitespace();
++
++        if (token.EqualsLiteral("m") && !sentMethod) {
++          ProcessHeader(nvPair(":method"_ns, method), false, false);
++          sentMethod = true;
++        } else if (token.EqualsLiteral("p") && !sentPath) {
++          ProcessHeader(nvPair(":path"_ns, path), true, false);
++          sentPath = true;
++        } else if (token.EqualsLiteral("a") && !sentAuthority) {
++          ProcessHeader(nvPair(":authority"_ns, host), false, false);
++          sentAuthority = true;
++        } else if (token.EqualsLiteral("s") && !sentScheme) {
++          ProcessHeader(nvPair(":scheme"_ns, scheme), false, false);
++          sentScheme = true;
++        }
++
++        if (commaPos == -1) break;
++        start = commaPos + 1;
++      }
++      // Emit any headers not mentioned in the config (safety fallback)
++      if (!sentMethod)
++        ProcessHeader(nvPair(":method"_ns, method), false, false);
++      if (!sentPath)
++        ProcessHeader(nvPair(":path"_ns, path), true, false);
++      if (!sentAuthority)
++        ProcessHeader(nvPair(":authority"_ns, host), false, false);
++      if (!sentScheme)
++        ProcessHeader(nvPair(":scheme"_ns, scheme), false, false);
++    } else {
++      // Default Firefox order: method, path, authority, scheme
++      ProcessHeader(nvPair(":method"_ns, method), false, false);
++      ProcessHeader(nvPair(":path"_ns, path), true, false);
++      ProcessHeader(nvPair(":authority"_ns, host), false, false);
++      ProcessHeader(nvPair(":scheme"_ns, scheme), false, false);
++    }
+     if (isWebsocket) {
+       ProcessHeader(nvPair(":protocol"_ns, protocol), false, false);
+     }
+diff --git a/netwerk/protocol/http/Http2Session.cpp b/netwerk/protocol/http/Http2Session.cpp
+index 4d118a39cd..fa4fbd4b02 100644
+--- a/netwerk/protocol/http/Http2Session.cpp
++++ b/netwerk/protocol/http/Http2Session.cpp
+@@ -17,6 +17,7 @@
+ 
+ #include <algorithm>
+ 
++#include "MaskConfig.hpp"  // Tegufox HTTP/2 fingerprint spoofing
+ #include "AltServiceChild.h"
+ #include "CacheControlParser.h"
+ #include "Http2Session.h"
+@@ -1042,10 +1043,10 @@ void Http2Session::SendHello() {
+   MOZ_ASSERT(OnSocketThread(), "not on socket thread");
+   LOG3(("Http2Session::SendHello %p\n", this));
+ 
+-  // sized for magic + 6 settings and a session window update and 6 priority
+-  // frames 24 magic, 33 for settings (9 header + 4 settings @6), 13 for window
+-  // update, 6 priority frames at 14 (9 + 5) each
+-  static const uint32_t maxSettings = 6;
++  // sized for magic + 8 settings (max with Tegufox custom) and a session window
++  // update and 6 priority frames. 24 magic, 57 for settings (9 header + 8
++  // settings @6), 13 for window update, 6 priority frames at 14 (9 + 5) each
++  static const uint32_t maxSettings = 8;
+   static const uint32_t prioritySize =
+       kPriorityGroupCount * (kFrameHeaderBytes + 5);
+   static const uint32_t maxDataLen =
+@@ -1061,73 +1062,107 @@ void Http2Session::SendHello() {
+   // frame header will be filled in after we know how long the frame is
+   uint8_t numberOfEntries = 0;
+ 
+-  // entries need to be listed in order by ID
+-  // 1st entry is bytes 9 to 14
+-  // 2nd entry is bytes 15 to 20
+-  // 3rd entry is bytes 21 to 26
+-  // 4th entry is bytes 27 to 32
+-  // 5th entry is bytes 33 to 38
+-
+-  // Let the other endpoint know about our default HPACK decompress table size
+-  uint32_t maxHpackBufferSize = gHttpHandler->DefaultHpackBuffer();
+-  mDecompressor.SetInitialMaxBufferSize(maxHpackBufferSize);
+-  NetworkEndian::writeUint16(packet + kFrameHeaderBytes + (6 * numberOfEntries),
+-                             SETTINGS_TYPE_HEADER_TABLE_SIZE);
+-  NetworkEndian::writeUint32(
+-      packet + kFrameHeaderBytes + (6 * numberOfEntries) + 2,
+-      maxHpackBufferSize);
+-  numberOfEntries++;
+-
+-  // We don't support HTTP/2 Push. Set SETTINGS_TYPE_ENABLE_PUSH to 0
+-  NetworkEndian::writeUint16(packet + kFrameHeaderBytes + (6 * numberOfEntries),
+-                             SETTINGS_TYPE_ENABLE_PUSH);
+-  // The value portion of the setting pair is already initialized to 0
+-  numberOfEntries++;
+-
+-  // We might also want to set the SETTINGS_TYPE_MAX_CONCURRENT to 0
+-  // to indicate that we don't support any incoming push streams,
+-  // but some websites panic when we do that, so we don't by default.
+-  if (StaticPrefs::network_http_http2_send_push_max_concurrent_frame()) {
+-    NetworkEndian::writeUint16(
+-        packet + kFrameHeaderBytes + (6 * numberOfEntries),
+-        SETTINGS_TYPE_MAX_CONCURRENT);
+-    // The value portion of the setting pair is already initialized to 0
+-    numberOfEntries++;
+-  }
+-  mWaitingForSettingsAck = true;
++  // Tegufox HTTP/2 fingerprint: Read settings order from MaskConfig
++  // Default Firefox order: "1,2,4,5" (IDs to send, in wire order)
++  // Chrome-like example:   "1,2,3,4,6" (adds MAX_CONCURRENT + MAX_HEADER_LIST)
++  auto settingsOrderOpt = MaskConfig::GetString("http2:settings_order");
++  std::string settingsOrder = settingsOrderOpt.value_or("1,2,4,5");
++
++  // Tegufox: Read individual settings values from MaskConfig
++  uint32_t cfgHeaderTableSize =
++      MaskConfig::GetUint32("http2:header_table_size")
++          .value_or(gHttpHandler->DefaultHpackBuffer());
++  uint32_t cfgEnablePush =
++      MaskConfig::GetUint32("http2:enable_push").value_or(0);
++  uint32_t cfgMaxConcurrent =
++      MaskConfig::GetUint32("http2:max_concurrent_streams").value_or(0);
++  uint32_t cfgInitialWindowSize =
++      MaskConfig::GetUint32("http2:initial_window_size")
++          .value_or(mPushAllowance);
++  uint32_t cfgMaxFrameSize =
++      MaskConfig::GetUint32("http2:max_frame_size").value_or(kMaxFrameData);
++  uint32_t cfgMaxHeaderListSize =
++      MaskConfig::GetUint32("http2:max_header_list_size").value_or(0);
++
++  // Set initial HPACK decompress table size based on configured value
++  mDecompressor.SetInitialMaxBufferSize(cfgHeaderTableSize);
++
++  // Parse settings_order and emit entries in the specified order
++  // Format: comma-separated setting IDs, e.g., "1,2,3,4,5,6"
++  {
++    size_t pos = 0;
++    while (pos < settingsOrder.size()) {
++      // Skip whitespace/commas
++      while (pos < settingsOrder.size() &&
++             (settingsOrder[pos] == ',' || settingsOrder[pos] == ' ')) {
++        pos++;
++      }
++      if (pos >= settingsOrder.size()) break;
++
++      // Parse the setting ID number
++      int settingId = 0;
++      while (pos < settingsOrder.size() && settingsOrder[pos] >= '0' &&
++             settingsOrder[pos] <= '9') {
++        settingId = settingId * 10 + (settingsOrder[pos] - '0');
++        pos++;
++      }
+ 
+-  // Advertise the Push RWIN for the session, and on each new pull stream
+-  // send a window update
+-  NetworkEndian::writeUint16(packet + kFrameHeaderBytes + (6 * numberOfEntries),
+-                             SETTINGS_TYPE_INITIAL_WINDOW);
+-  NetworkEndian::writeUint32(
+-      packet + kFrameHeaderBytes + (6 * numberOfEntries) + 2, mPushAllowance);
+-  numberOfEntries++;
+-
+-  // Make sure the other endpoint knows that we're sticking to the default max
+-  // frame size
+-  NetworkEndian::writeUint16(packet + kFrameHeaderBytes + (6 * numberOfEntries),
+-                             SETTINGS_TYPE_MAX_FRAME_SIZE);
+-  NetworkEndian::writeUint32(
+-      packet + kFrameHeaderBytes + (6 * numberOfEntries) + 2, kMaxFrameData);
+-  numberOfEntries++;
++      if (settingId == 0 || numberOfEntries >= maxSettings) continue;
++
++      uint32_t value = 0;
++      uint16_t id = static_cast<uint16_t>(settingId);
++
++      switch (settingId) {
++        case SETTINGS_TYPE_HEADER_TABLE_SIZE:  // 1
++          value = cfgHeaderTableSize;
++          break;
++        case SETTINGS_TYPE_ENABLE_PUSH:  // 2
++          value = cfgEnablePush;
++          break;
++        case SETTINGS_TYPE_MAX_CONCURRENT:  // 3
++          value = cfgMaxConcurrent;
++          break;
++        case SETTINGS_TYPE_INITIAL_WINDOW:  // 4
++          value = cfgInitialWindowSize;
++          break;
++        case SETTINGS_TYPE_MAX_FRAME_SIZE:  // 5
++          value = cfgMaxFrameSize;
++          break;
++        case 6:  // MAX_HEADER_LIST_SIZE
++          value = cfgMaxHeaderListSize;
++          break;
++        default:
++          continue;  // Unknown setting ID, skip
++      }
+ 
+-  bool disableRFC7540Priorities =
+-      !StaticPrefs::network_http_http2_enabled_deps() ||
+-      !gHttpHandler->CriticalRequestPrioritization();
++      NetworkEndian::writeUint16(
++          packet + kFrameHeaderBytes + (6 * numberOfEntries), id);
++      NetworkEndian::writeUint32(
++          packet + kFrameHeaderBytes + (6 * numberOfEntries) + 2, value);
++      numberOfEntries++;
++    }
++  }
+ 
+-  // See bug 1909666. Sending this new setting could break some websites.
+-  if (disableRFC7540Priorities &&
+-      StaticPrefs::network_http_http2_send_NO_RFC7540_PRI()) {
+-    NetworkEndian::writeUint16(
+-        packet + kFrameHeaderBytes + (6 * numberOfEntries),
+-        SETTINGS_NO_RFC7540_PRIORITIES);
+-    NetworkEndian::writeUint32(
+-        packet + kFrameHeaderBytes + (6 * numberOfEntries) + 2,
+-        disableRFC7540Priorities ? 1 : 0);
+-    numberOfEntries++;
++  // If no custom settings_order was provided AND the default Firefox behavior
++  // would send NO_RFC7540_PRIORITIES, still allow it
++  if (!settingsOrderOpt.has_value()) {
++    bool disableRFC7540Priorities =
++        !StaticPrefs::network_http_http2_enabled_deps() ||
++        !gHttpHandler->CriticalRequestPrioritization();
++    if (disableRFC7540Priorities &&
++        StaticPrefs::network_http_http2_send_NO_RFC7540_PRI() &&
++        numberOfEntries < maxSettings) {
++      NetworkEndian::writeUint16(
++          packet + kFrameHeaderBytes + (6 * numberOfEntries),
++          SETTINGS_NO_RFC7540_PRIORITIES);
++      NetworkEndian::writeUint32(
++          packet + kFrameHeaderBytes + (6 * numberOfEntries) + 2, 1);
++      numberOfEntries++;
++    }
+   }
+ 
++  mWaitingForSettingsAck = true;
++
+   MOZ_ASSERT(numberOfEntries <= maxSettings);
+   uint32_t dataLen = 6 * numberOfEntries;
+   CreateFrameHeader(packet, dataLen, FRAME_TYPE_SETTINGS, 0, 0);
+@@ -1136,12 +1171,22 @@ void Http2Session::SendHello() {
+   LogIO(this, nullptr, "Generate Settings", packet,
+         kFrameHeaderBytes + dataLen);
+ 
+-  // now bump the local session window from 64KB
+-  uint32_t sessionWindowBump = mInitialRwin - kDefaultRwin;
+-  if (kDefaultRwin < mInitialRwin) {
+-    // send a window update for the session (Stream 0) for something large
++  // Tegufox: Configurable WINDOW_UPDATE increment
++  // Default Firefox: mInitialRwin - kDefaultRwin = 12582912 - 65535 = 12517377
++  // Chrome-like:     15663105
++  auto cfgWindowUpdate = MaskConfig::GetUint32("http2:window_update");
++  uint32_t sessionWindowBump;
++
++  if (cfgWindowUpdate.has_value()) {
++    sessionWindowBump = cfgWindowUpdate.value();
++    mLocalSessionWindow = kDefaultRwin + sessionWindowBump;
++  } else {
++    sessionWindowBump = mInitialRwin - kDefaultRwin;
+     mLocalSessionWindow = mInitialRwin;
++  }
+ 
++  if (sessionWindowBump > 0) {
++    // send a window update for the session (Stream 0) for something large
+     packet = mOutputQueueBuffer.get() + mOutputQueueUsed;
+     CreateFrameHeader(packet, 4, FRAME_TYPE_WINDOW_UPDATE, 0, 0);
+     mOutputQueueUsed += kFrameHeaderBytes + 4;
+@@ -1152,6 +1197,10 @@ void Http2Session::SendHello() {
+     LogIO(this, nullptr, "Session Window Bump ", packet, kFrameHeaderBytes + 4);
+   }
+ 
++  bool disableRFC7540Priorities =
++      !StaticPrefs::network_http_http2_enabled_deps() ||
++      !gHttpHandler->CriticalRequestPrioritization();
++
+   if (!disableRFC7540Priorities) {
+     mUseH2Deps = true;
+     MOZ_ASSERT(mNextStreamID == kLeaderGroupID);
