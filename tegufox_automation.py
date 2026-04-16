@@ -287,6 +287,14 @@ class TegufoxSession:
             self.mouse = HumanMouse(self.page, config=self.config.mouse_config)
             logger.info("Human mouse initialized")
 
+        # Initialize human keyboard
+        try:
+            from tegufox_keyboard import HumanKeyboard
+            self._keyboard = HumanKeyboard(self.page)
+            logger.info("Human keyboard initialized")
+        except ImportError:
+            self._keyboard = None
+
         # Validate fingerprint consistency
         self._validate_fingerprints()
 
@@ -412,53 +420,58 @@ class TegufoxSession:
         self,
         selector: str,
         text: str,
-        delay_min: int = 50,
-        delay_max: int = 150,
+        wpm: float = None,
+        typo_rate: float = None,
         **kwargs,
     ) -> None:
         """
-        Type text with human-like timing
+        Type text with human-like timing using HumanKeyboard.
+
+        Uses log-normal inter-key intervals, per-bigram speed model,
+        typo injection with adjacent-key correction, and WPM envelope
+        with warmup/fatigue.
 
         Args:
             selector: CSS selector for input field
             text: Text to type
-            delay_min: Minimum delay between keystrokes (ms)
-            delay_max: Maximum delay between keystrokes (ms)
-            **kwargs: Additional type options
+            wpm: Words per minute (default: random 40-80)
+            typo_rate: Typo probability per char (default: 0.03)
+            **kwargs: Additional options
         """
         if not self.page:
             raise RuntimeError("Session not started")
 
         logger.debug(f"Human type: {selector} = '{text[:20]}...'")
 
-        # Click to focus
-        self.page.click(selector)
-
-        # Type with random delays per character
-        for char in text:
-            self.page.keyboard.type(char)
-            delay = random.randint(delay_min, delay_max)
-            time.sleep(delay / 1000.0)
+        if self._keyboard:
+            self._keyboard.type_text(text, selector=selector, wpm=wpm, typo_rate=typo_rate)
+        else:
+            # Fallback: simple per-char typing
+            self.page.click(selector)
+            for char in text:
+                self.page.keyboard.type(char)
+                time.sleep(random.randint(50, 150) / 1000.0)
 
         self.session_state.last_active = time.time()
 
-    def human_scroll(self, distance: int = 500, direction: str = "down") -> None:
+    def human_scroll(self, distance: int = 500, direction: str = "down", platform: str = "windows") -> None:
         """
-        Scroll page with human-like behavior
+        Scroll page with ease-out-cubic physics.
 
         Args:
             distance: Scroll distance in pixels
             direction: "down", "up", "left", "right"
+            platform: "windows" | "macos" | "linux" (affects step size)
         """
         if not self.page:
             raise RuntimeError("Session not started")
 
-        logger.debug(f"Human scroll: {direction} {distance}px")
+        logger.debug(f"Human scroll: {direction} {distance}px ({platform})")
 
         if self.mouse:
-            self.mouse.scroll(distance if direction == "down" else -distance)
+            delta = distance if direction == "down" else -distance
+            self.mouse.scroll(delta, platform=platform)
         else:
-            # Fallback to standard scroll
             if direction in ("down", "up"):
                 delta_y = distance if direction == "down" else -distance
                 self.page.mouse.wheel(0, delta_y)
