@@ -1,0 +1,115 @@
+#!/usr/bin/env python3
+"""
+Tegufox CLI Entry Point
+
+Interactive CLI for profile management and automation.
+
+Usage:
+    ./tegufox-cli [command] [options]
+
+Commands:
+    profile create <name> <browser> <os>    Create a new profile
+    profile list                             List all profiles
+    profile validate <name>                  Validate a profile
+    fleet generate <count>                   Generate a fleet of profiles
+    api start [--port 8420]                  Start the REST API server
+    
+Examples:
+    ./tegufox-cli profile create my-profile chrome-144 windows
+    ./tegufox-cli fleet generate 10
+    ./tegufox-cli api start --port 8420
+"""
+
+import sys
+from pathlib import Path
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent))
+
+def main():
+    import argparse
+    from tegufox_core import ProfileManager, generate_fleet
+    
+    parser = argparse.ArgumentParser(
+        description="Tegufox CLI - Browser Fingerprint Management",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__
+    )
+    
+    subparsers = parser.add_subparsers(dest='command', help='Command to run')
+    
+    # Profile commands
+    profile_parser = subparsers.add_parser('profile', help='Profile management')
+    profile_sub = profile_parser.add_subparsers(dest='subcommand')
+    
+    create_parser = profile_sub.add_parser('create', help='Create a new profile')
+    create_parser.add_argument('name', help='Profile name')
+    create_parser.add_argument('browser', help='Browser template (e.g., chrome-144)')
+    create_parser.add_argument('os', help='Operating system (windows/macos/linux)')
+    
+    profile_sub.add_parser('list', help='List all profiles')
+    
+    validate_parser = profile_sub.add_parser('validate', help='Validate a profile')
+    validate_parser.add_argument('name', help='Profile name')
+    
+    # Fleet commands
+    fleet_parser = subparsers.add_parser('fleet', help='Fleet generation')
+    fleet_sub = fleet_parser.add_subparsers(dest='subcommand')
+    
+    generate_parser = fleet_sub.add_parser('generate', help='Generate a fleet')
+    generate_parser.add_argument('count', type=int, help='Number of profiles')
+    
+    # API commands
+    api_parser = subparsers.add_parser('api', help='API server')
+    api_sub = api_parser.add_subparsers(dest='subcommand')
+    
+    start_parser = api_sub.add_parser('start', help='Start API server')
+    start_parser.add_argument('--port', type=int, default=8420, help='Port number')
+    
+    args = parser.parse_args()
+    
+    if not args.command:
+        parser.print_help()
+        return
+    
+    # Handle commands
+    if args.command == 'profile':
+        manager = ProfileManager("profiles")
+        
+        if args.subcommand == 'create':
+            profile = manager.generate_template(
+                browser=args.browser,
+                os=args.os,
+            )
+            manager.save_profile(args.name, profile)
+            print(f"✓ Created profile: {args.name}")
+            
+        elif args.subcommand == 'list':
+            profiles = manager.list_profiles()
+            print(f"Found {len(profiles)} profiles:")
+            for p in profiles:
+                print(f"  - {p}")
+                
+        elif args.subcommand == 'validate':
+            profile = manager.load_profile(args.name)
+            report = manager.validate_profile(profile)
+            print(report.summary())
+            
+    elif args.command == 'fleet':
+        if args.subcommand == 'generate':
+            manager = ProfileManager("profiles")
+            fleet = generate_fleet(manager, args.count)
+            for i, profile in enumerate(fleet, 1):
+                name = f"fleet-{i:03d}"
+                manager.save_profile(name, profile)
+            print(f"✓ Generated {args.count} profiles")
+            
+    elif args.command == 'api':
+        if args.subcommand == 'start':
+            import uvicorn
+            print(f"Starting Tegufox API on port {args.port}...")
+            print(f"Docs: http://localhost:{args.port}/docs")
+            uvicorn.run("tegufox_cli.api:app", host="0.0.0.0", port=args.port, reload=True)
+
+if __name__ == "__main__":
+    main()

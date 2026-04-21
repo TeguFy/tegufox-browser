@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head><title>UA Spoof Test</title>
+<style>body{font-family:monospace;padding:20px;background:#1e1e2e;color:#cdd6f4}
+table{border-collapse:collapse;width:100%}td,th{border:1px solid #45475a;padding:8px;text-align:left}
+tr.pass{background:#a6e3a133}tr.fail{background:#f3817633}.label{color:#89b4fa;font-weight:bold}</style>
+</head>
+<body>
+<h2>Browser Fingerprint Check</h2>
+<table id="t"></table>
+<script>
+const rows = [
+  ['navigator.userAgent', navigator.userAgent],
+  ['navigator.platform', navigator.platform],
+  ['navigator.vendor', navigator.vendor],
+  ['navigator.appVersion', navigator.appVersion],
+  ['navigator.product', navigator.product],
+  ['navigator.productSub', navigator.productSub],
+  ['window.chrome exists', String(typeof window.chrome !== 'undefined')],
+  ['InstallTrigger (Firefox tell)', String(typeof InstallTrigger !== 'undefined')],
+  ['CSS -moz- support', String(CSS.supports('-moz-appearance', 'none'))],
+  ['HTTP UA header (from JS)', navigator.userAgent],
+];
+const t = document.getElementById('t');
+t.innerHTML = '<tr><th>Property</th><th>Value</th><th>Expected (Chrome win)</th><th>Pass?</th></tr>';
+const expected = {
+  'navigator.vendor': 'Google Inc.',
+  'navigator.product': 'Gecko',
+  'navigator.productSub': '20030107',
+  'window.chrome exists': 'true',
+  'InstallTrigger (Firefox tell)': 'false',
+  'CSS -moz- support': 'false',
+};
+rows.forEach(([k,v]) => {
+  const exp = expected[k] || '';
+  const pass = exp ? (v === exp ? '✓' : '✗') : '';
+  const cls = exp ? (v === exp ? 'pass' : 'fail') : '';
+  t.innerHTML += `<tr class="${cls}"><td class="label">${k}</td><td>${v}</td><td>${exp}</td><td>${pass}</td></tr>`;
+});
+</script>
+</body></html>

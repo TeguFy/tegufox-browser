@@ -1,0 +1,3 @@
+[submodule "camoufox-source"]
+	path = camoufox-source
+	url = https://github.com/CloverLabsAI/camoufox.git

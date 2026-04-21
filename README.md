@@ -3,191 +3,166 @@
   
   # Tegufox Browser
   
-  > Trình duyệt anti-detect thế hệ mới, tối ưu cho thương mại điện tử
+  > Deep browser fingerprint engine — spoofing đa tầng từ Gecko C++ core
 </div>
 
 [![License](https://img.shields.io/badge/license-MPL%202.0-blue.svg)](LICENSE)
-[![Status](https://img.shields.io/badge/status-planning-orange.svg)](ROADMAP.md)
+[![Status](https://img.shields.io/badge/status-phase%201-yellow.svg)](ROADMAP.md)
 [![Based on](https://img.shields.io/badge/based%20on-Camoufox-green.svg)](https://github.com/CloverLabsAI/camoufox)
 
 ---
 
-## 🦊 Giới thiệu
+## Giới thiệu
 
-**Tegufox** là một trình duyệt anti-detect được fork từ [Camoufox](https://github.com/CloverLabsAI/camoufox), được thiết kế đặc biệt để vượt qua các hệ thống chống gian lận trên các nền tảng thương mại điện tử như eBay, Amazon, và Etsy.
+**Tegufox** là một deep browser fingerprint engine, fork từ [Camoufox](https://github.com/CloverLabsAI/camoufox) (Firefox Gecko), tập trung vào việc giả lập môi trường trình duyệt ở tất cả các tầng — từ giao thức mạng cấp thấp cho đến hành vi sinh trắc học.
+
+Mục tiêu không phải là "giả lập trình duyệt" mà là **tạo ra một môi trường thực thi có độ tin cậy cao đến mức bất kỳ phép đo nào cũng trả về kết quả như một người dùng bình thường**.
 
 ### Tại sao Tegufox?
 
-Camoufox là một nền tảng tuyệt vời cho web scraping và automation, nhưng các nền tảng thương mại điện tử hiện đại yêu cầu nhiều hơn thế:
+Camoufox giải quyết được vấn đề headless bypass rất tốt. Nhưng các hệ thống anti-fraud hiện đại kiểm tra nhiều hơn:
 
-- ✅ **Fingerprint consistency** - Tính nhất quán tuyệt đối giữa OS, GPU, fonts, screen
-- ✅ **Behavioral simulation** - Mô phỏng hành vi người dùng thật (Neuromotor Jitter)
-- ✅ **E-commerce optimization** - Profiles tối ưu cho từng platform
-- ✅ **Advanced bypass** - Vượt qua Cloudflare Turnstile, reCAPTCHA v3
+- Không chỉ "có phải bot không" — mà "môi trường này có nhất quán không?"
+- Kiểm tra sự tương quan giữa OS, GPU, fonts, screen, TLS, hành vi
+- Phân tích TLS JA3/JA4, HTTP/2 SETTINGS frames
+- Đánh giá quang phổ hành vi: mouse, typing, scroll
+
+Tegufox can thiệp vào từng tầng một cách nhất quán.
 
 ---
 
-## 🎯 Triết lý
+## Triết lý
 
 > **"Fake Environment, Not Fake Browser"**
 
-Thay vì cố gắng "lừa" hệ thống, Tegufox tạo ra một môi trường có độ tin cậy cao đến mức mọi phép đo lường từ phía hệ thống anti-fraud đều trả về kết quả tích cực.
+Thay vì cố gắng "lừa" hệ thống, Tegufox tạo ra một môi trường có sự nhất quán nội bộ tuyệt đối giữa tất cả các tầng — từ network protocol cho đến chuyển động của chuột.
 
 ---
 
-## ✨ Tính năng (Planned)
+## Kiến trúc Fingerprint Đa tầng
+
+```
+┌─────────────────────────────────────────────┐
+│            Tegufox Engine                   │
+├─────────────────────────────────────────────┤
+│  Layer 7: Behavioral                        │
+│  Mouse neuromotor • Typing rhythm           │
+│  Scroll momentum • Form interaction         │
+├─────────────────────────────────────────────┤
+│  Layer 6: Hardware Fingerprint              │
+│  WebGL/Canvas noise • Audio Context         │
+│  Font metrics • Battery API                 │
+├─────────────────────────────────────────────┤
+│  Layer 5: Browser Environment               │
+│  Navigator • Screen • Viewport              │
+│  Headless masking • Automation hiding       │
+├─────────────────────────────────────────────┤
+│  Layer 4: Network Protocol                  │
+│  TLS JA3/JA4 • HTTP/2 SETTINGS             │
+│  Pseudo-header order • ALPN                 │
+├─────────────────────────────────────────────┤
+│  Layer 3: Network                           │
+│  WebRTC ICE masking • DNS (DoH/DoT)         │
+│  IP consistency • STUN leak prevention      │
+└─────────────────────────────────────────────┘
+               │ C++ Patches + MaskConfig
+               ▼
+┌─────────────────────────────────────────────┐
+│     Camoufox → Firefox Gecko Engine         │
+└─────────────────────────────────────────────┘
+```
+
+---
+
+## Tính năng
 
 ### Kế thừa từ Camoufox:
-- **C++ engine-level patches** - Không phải JS injection
-- **Playwright integration** - Sandboxed page agent
-- **WebRTC IP spoofing** - Protocol-level masking
-- **Navigator spoofing** - Device, browser, locale
-- **WebGL/Canvas spoofing** - Hardware fingerprinting
-- **Font protection** - Metrics randomization
+- **C++ engine-level patches** — không JS injection
+- **Playwright integration** — sandboxed page agent
+- **WebRTC IP spoofing** — protocol-level masking
+- **Navigator spoofing** — device, browser, locale
+- **WebGL/Canvas spoofing** — hardware fingerprinting
+- **Font protection** — metrics randomization
 
 ### Tegufox enhancements:
-- 🎯 **Neuromotor Jitter** - Mouse movement theo Fitts' Law
-- 🎯 **E-commerce profiles** - eBay, Amazon, Etsy optimized
-- 🎯 **Fingerprint consistency engine** - Correlation validation
-- 🎯 **Advanced TLS tuning** - JA3/JA4 per-platform
-- 🎯 **Behavioral AI** - Typing rhythm, scroll patterns
-- 🎯 **Cloud sync** - Profile management & team collaboration
+- **Fingerprint Consistency Engine** — cross-layer correlation validation (OS ↔ GPU ↔ Fonts ↔ Screen)
+- **TLS/HTTP2 Alignment** — JA3/JA4 + HTTP/2 SETTINGS khiến bất kỳ browser nào
+- **WebRTC ICE Manager** — can thiệp từ PeerConnectionImpl.cpp, self-destruct API
+- **Neuromotor Mouse** — Fitts' Law, distance-aware trajectory, micro-tremor
+- **Canvas Noise v2** — per-domain seed, chống hash correlation
+- **WebGL Enhanced** — GPU vendor/renderer/extensions consistency
+- **DNS Leak Prevention** — DoH/DoT integration
+- **Automation Framework** — high-level Python API, profile rotation, session management
 
 ---
 
-## 🚀 Quick Start
-
-> **⚠️ Project is in planning phase. Installation instructions coming soon.**
+## Quick Start
 
 ```bash
-# Clone repository (when available)
-git clone https://github.com/yourusername/tegufox.git
-cd tegufox
-
-# Build from source
-./build.sh
-
-# Run with Python API
-pip install tegufox
+git clone https://github.com/lugondev/tegufox-browser
+cd tegufox-browser
+python -m venv venv && source venv/bin/activate
+pip install camoufox
 ```
 
 ```python
-# Example usage (planned API)
-from tegufox import Tegufox
+from tegufox_automation import TegufoxSession
 
-# Launch with e-commerce optimized profile
-with Tegufox(platform='ebay', geo='US') as browser:
-    page = browser.new_page()
-    page.goto("https://www.ebay.com")
-    # Automation với fingerprint nhất quán + behavioral AI
+with TegufoxSession(profile="chrome-120") as session:
+    session.goto("https://creepjs.com")
+    session.screenshot("fingerprint-test.png")
 ```
 
 ---
 
-## 📊 Roadmap
+## Use Cases
+
+Tegufox là một engine. Nó có thể được dùng cho bất kỳ kịch bản nào cần browser fingerprint không thể phân biệt với người dùng thật:
+
+- Web automation & scraping
+- Privacy & anonymous browsing
+- Security research & bot detection testing
+- Multi-account management
+- Anti-fraud system testing
+- E-commerce automation *(một ví dụ use case)*
+
+---
+
+## Roadmap
 
 Xem chi tiết tại [ROADMAP.md](ROADMAP.md)
 
-### Timeline:
-- **Phase 0**: Research & Fork (2-3 tuần) - *Current*
-- **Phase 1**: Setup & Optimization (3-4 tuần)
-- **Phase 2**: Enhanced Fingerprinting (2 tháng)
-- **Phase 3**: Behavioral Simulation (2-3 tháng)
-- **Phase 4**: E-commerce Optimization (2 tháng)
-- **Phase 5**: Ecosystem & API (1-2 tháng)
-
-**Total**: 6-10 tháng đến production-ready
-
----
-
-## 🎯 Use Cases
-
-### ✅ Legitimate use cases:
-- E-commerce automation tools
-- Price monitoring & comparison
-- Market research & analytics
-- Multi-account management (với proper authorization)
-- Testing anti-fraud systems (với permission)
-
-### ⚠️ Disclaimer:
-Tegufox là một công cụ. Người dùng chịu trách nhiệm đảm bảo tuân thủ Terms of Service của các platforms và luật pháp địa phương.
+| Phase | Mô tả | Trạng thái |
+|-------|---------|-------------|
+| 0 | Foundation & Research | ✅ Complete |
+| 1 | Toolkit & Automation Framework | 🔄 In Progress |
+| 2 | Core C++ Engine Patches | Planned |
+| 3 | Fingerprint Consistency Engine | Planned |
+| 4 | Behavioral Layer | Planned |
+| 5 | Ecosystem & API | Planned |
 
 ---
 
-## 🏗️ Architecture
+## Dựa trên
 
-```
-┌─────────────────────────────────────────┐
-│         Tegufox Browser Core            │
-│      (Firefox Gecko Engine + Patches)   │
-├─────────────────────────────────────────┤
-│  ┌──────────────┐  ┌─────────────────┐ │
-│  │ Fingerprint  │  │ Behavioral AI   │ │
-│  │ Consistency  │  │ (Neuromotor)    │ │
-│  │ Engine       │  │                 │ │
-│  └──────────────┘  └─────────────────┘ │
-├─────────────────────────────────────────┤
-│  ┌──────────────┐  ┌─────────────────┐ │
-│  │ WebRTC       │  │ TLS/HTTP        │ │
-│  │ IP Manager   │  │ Fingerprint     │ │
-│  └──────────────┘  └─────────────────┘ │
-├─────────────────────────────────────────┤
-│       Playwright Integration            │
-│         (Sandboxed Agent)               │
-└─────────────────────────────────────────┘
-         │
-         ▼
-┌─────────────────────────────────────────┐
-│      Python API / REST API              │
-│  (Profile Management, Automation)       │
-└─────────────────────────────────────────┘
-```
-
----
-
-## 📚 Documentation
-
-- [Roadmap](ROADMAP.md) - Development roadmap & phases
-- [Idea](idea.md) - Original concept & architecture (Vietnamese)
-- [Contributing](CONTRIBUTING.md) - How to contribute *(coming soon)*
-- [API Reference](docs/API.md) - API documentation *(coming soon)*
-
----
-
-## 🤝 Based On
-
-Tegufox được fork từ và dựa trên:
 - **[Camoufox](https://github.com/CloverLabsAI/camoufox)** by daijro & CloverLabsAI
 - **[Firefox](https://www.mozilla.org/firefox/)** by Mozilla
 - **[Playwright](https://playwright.dev/)** by Microsoft
 
-Cảm ơn tất cả maintainers và contributors của các projects trên!
-
 ---
 
-## 📄 License
+## License
 
 MPL 2.0 (Mozilla Public License)
 
-Tegufox là một fork của Camoufox, tuân theo MPL 2.0 license. Tất cả modifications được công khai theo yêu cầu của license.
+---
+
+## Legal Notice
+
+Tegufox được phát triển cho mục đích nghiên cứu, bảo mật và testing. Người dùng chịu hoàn toàn trách nhiệm về cách sử dụng tool này.
 
 ---
 
-## ⚠️ Legal Notice
-
-Tegufox được phát triển cho mục đích nghiên cứu và testing. Việc sử dụng tool này để vi phạm Terms of Service của bất kỳ platform nào hoặc cho các hoạt động bất hợp pháp là **KHÔNG** được khuyến khích và nằm ngoài trách nhiệm của tác giả.
-
-Người dùng chịu hoàn toàn trách nhiệm về cách sử dụng tool này.
-
----
-
-## 📞 Contact
-
-- **Issues**: [GitHub Issues](https://github.com/yourusername/tegufox/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/yourusername/tegufox/discussions)
-
----
-
-**Status**: 🟠 Planning Phase  
+**Status**: Phase 1 — Week 3  
 **Version**: 0.1.0-alpha  
-**Last Updated**: 2026-04-13
+**Last Updated**: 2026-04-14

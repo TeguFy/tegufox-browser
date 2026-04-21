@@ -1,5 +1,5 @@
 diff --git a/dom/canvas/CanvasRenderingContext2D.cpp b/dom/canvas/CanvasRenderingContext2D.cpp
-index 4710946ca9..a76125de7e 100644
+index 4710946ca9..6c08c11b59 100644
 --- a/dom/canvas/CanvasRenderingContext2D.cpp
 +++ b/dom/canvas/CanvasRenderingContext2D.cpp
 @@ -72,6 +72,8 @@
@@ -11,7 +11,19 @@ index 4710946ca9..a76125de7e 100644
  #include "mozilla/gfx/2D.h"
  #include "mozilla/gfx/CanvasShutdownManager.h"
  #include "mozilla/gfx/DataSurfaceHelpers.h"
-@@ -5219,6 +5221,32 @@ UniquePtr<TextMetrics> CanvasRenderingContext2D::DrawOrMeasureText(
+@@ -2285,6 +2287,11 @@ UniquePtr<uint8_t[]> CanvasRenderingContext2D::GetImageBuffer(
+         SurfaceFormat::A8R8G8B8_UINT32);
+   }
+ 
++  // TEGUFOX: toDataURL/toBlob noise DISABLED.
++  // fv.pro detects per-pixel noise injection as canvas manipulation ("not real").
++  // Firefox's authentic rendering passes the authenticity check without modification.
++  // Profile uniqueness for canvas is achieved via the JS-layer seed-based approach.
++
+   return ret;
+ }
+ 
+@@ -5219,6 +5226,32 @@ UniquePtr<TextMetrics> CanvasRenderingContext2D::DrawOrMeasureText(
    // if only measuring, don't need to do any more work
    if (aOp == TextDrawOperation::MEASURE) {
      aError = NS_OK;
@@ -44,7 +56,7 @@ index 4710946ca9..a76125de7e 100644
      // Note that actualBoundingBoxLeft measures the distance in the leftward
      // direction, so its sign is reversed from our usual physical coordinates.
      double actualBoundingBoxLeft = offsetX - processor.mBoundingBox.X();
-@@ -5227,17 +5255,16 @@ UniquePtr<TextMetrics> CanvasRenderingContext2D::DrawOrMeasureText(
+@@ -5227,17 +5260,16 @@ UniquePtr<TextMetrics> CanvasRenderingContext2D::DrawOrMeasureText(
          -processor.mBoundingBox.Y() - baselineAnchor;
      double actualBoundingBoxDescent =
          processor.mBoundingBox.YMost() + baselineAnchor;
@@ -69,7 +81,7 @@ index 4710946ca9..a76125de7e 100644
    }
  
    // If we did not actually calculate bounds, set up a simple bounding box
-@@ -6481,7 +6508,22 @@ already_AddRefed<ImageData> CanvasRenderingContext2D::GetImageData(
+@@ -6481,7 +6513,22 @@ already_AddRefed<ImageData> CanvasRenderingContext2D::GetImageData(
      return nullptr;
    }
    MOZ_ASSERT(array);
@@ -95,10 +107,10 @@ index 4710946ca9..a76125de7e 100644
  static IntRect ClipImageDataTransfer(IntRect& aSrc, const IntPoint& aDestOffset,
 diff --git a/dom/canvas/TegufoxCanvasNoise.cpp b/dom/canvas/TegufoxCanvasNoise.cpp
 new file mode 100644
-index 0000000000..b18badeca3
+index 0000000000..0cbf865763
 --- /dev/null
 +++ b/dom/canvas/TegufoxCanvasNoise.cpp
-@@ -0,0 +1,195 @@
+@@ -0,0 +1,215 @@
 +/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -261,6 +273,26 @@ index 0000000000..b18badeca3
 +  }
 +}
 +
++void TegufoxCanvasNoise::InjectNoiseToBGRABuffer(uint8_t* aData,
++                                                  uint32_t aNumPixels,
++                                                  uint64_t aSeed) {
++  if (!aData || aNumPixels == 0) return;
++
++  std::mt19937_64 rng(aSeed);
++  std::normal_distribution<float> dist(0.0f, 2.0f);
++
++  // BGRA format (B=i, G=i+1, R=i+2, A=i+3)
++  for (uint32_t i = 0; i < aNumPixels * 4; i += 4) {
++    float n0 = dist(rng);
++    aData[i]     = Clamp(static_cast<float>(aData[i])     + n0, 0.0f, 255.0f);
++    float n1 = dist(rng);
++    aData[i + 1] = Clamp(static_cast<float>(aData[i + 1]) + n1, 0.0f, 255.0f);
++    float n2 = dist(rng);
++    aData[i + 2] = Clamp(static_cast<float>(aData[i + 2]) + n2, 0.0f, 255.0f);
++    // Alpha (i+3) — preserve
++  }
++}
++
 +bool TegufoxCanvasNoise::ExtractDomain(Document* aDocument,
 +                                        nsAString& aDomain) {
 +  if (!aDocument) {
@@ -296,10 +328,10 @@ index 0000000000..b18badeca3
 +}  // namespace mozilla
 diff --git a/dom/canvas/TegufoxCanvasNoise.h b/dom/canvas/TegufoxCanvasNoise.h
 new file mode 100644
-index 0000000000..3437a416ef
+index 0000000000..64edceb352
 --- /dev/null
 +++ b/dom/canvas/TegufoxCanvasNoise.h
-@@ -0,0 +1,92 @@
+@@ -0,0 +1,96 @@
 +/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -357,6 +389,10 @@ index 0000000000..3437a416ef
 +   */
 +  static void InjectNoise(ImageData* aImageData, uint64_t aSeed,
 +                          float aNoiseStdDev = 2.0);
++
++  // Apply noise directly to a raw BGRA pixel buffer (used by toDataURL/toBlob)
++  static void InjectNoiseToBGRABuffer(uint8_t* aData, uint32_t aNumPixels,
++                                      uint64_t aSeed);
 +
 +  /**
 +   * Extract domain from document URI

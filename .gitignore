@@ -65,3 +65,8 @@ tmp/
 temp/
 *.tmp
 data/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3

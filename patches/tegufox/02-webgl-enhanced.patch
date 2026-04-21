@@ -1,16 +1,41 @@
 diff --git a/dom/canvas/ClientWebGLContext.cpp b/dom/canvas/ClientWebGLContext.cpp
-index 9d0dc0fe91..b4554faedd 100644
+index 9d0dc0fe91..ee7077eae0 100644
 --- a/dom/canvas/ClientWebGLContext.cpp
 +++ b/dom/canvas/ClientWebGLContext.cpp
-@@ -5,6 +5,7 @@
+@@ -5,6 +5,8 @@
  
  #include "ClientWebGLContext.h"
  #include "MaskConfig.hpp"
 +#include "TegufoxGPUProfiles.h"  // Tegufox WebGL: GPU consistency
++#include "TegufoxCanvasNoise.h"  // Tegufox WebGL: readPixels + toDataURL noise
  #include "WebGLParamsManager.h"
  #include "mozilla/dom/BrowsingContext.h"
  #include "mozilla/dom/Document.h"
-@@ -2640,6 +2641,28 @@ void ClientWebGLContext::GetParameter(JSContext* cx, GLenum pname,
+@@ -1430,6 +1432,23 @@ UniquePtr<uint8_t[]> ClientWebGLContext::GetImageBuffer(
+   const auto& premultAlpha = notLost->info.options.premultipliedAlpha;
+   *out_imageSize = dataSurface->GetSize();
+ 
++  // Tegufox: domain-seeded noise for WebGL toDataURL anti-fingerprinting.
++  {
++    nsAutoString domain;
++    Document* doc = mCanvasElement ? mCanvasElement->OwnerDoc() : nullptr;
++    if (doc && TegufoxCanvasNoise::ExtractDomain(doc, domain)) {
++      const gfx::DataSourceSurface::ScopedMap map(dataSurface,
++                                                   gfx::DataSourceSurface::READ_WRITE);
++      if (map.IsMapped()) {
++        uint64_t seed = TegufoxCanvasNoise::GenerateDomainSeed(domain);
++        auto sz = dataSurface->GetSize();
++        uint32_t numPixels =
++            static_cast<uint32_t>(sz.width) * static_cast<uint32_t>(sz.height);
++        TegufoxCanvasNoise::InjectNoiseToBGRABuffer(map.GetData(), numPixels, seed);
++      }
++    }
++  }
++
+   if (aExtractionBehavior == CanvasUtils::ImageExtraction::Randomize) {
+     return gfxUtils::GetImageBufferWithRandomNoise(
+         dataSurface, premultAlpha, GetCookieJarSettings(), PrincipalOrNull(),
+@@ -2640,6 +2659,28 @@ void ClientWebGLContext::GetParameter(JSContext* cx, GLenum pname,
            default:
              MOZ_CRASH();
          }
@@ -39,6 +64,25 @@ index 9d0dc0fe91..b4554faedd 100644
          break;
        }
  
+@@ -5575,6 +5616,18 @@ void ClientWebGLContext::ReadPixels(GLint x, GLint y, GLsizei width,
+             range->size_bytes(), pii->elementsPerPixel, pii->bytesPerElement,
+             alphaChannelOffset, hasAlphaChannel);
+       }
++      // Tegufox: domain-seeded noise for WebGL gl.readPixels anti-fingerprinting.
++      if (type == LOCAL_GL_UNSIGNED_BYTE &&
++          (format == LOCAL_GL_RGBA || format == LOCAL_GL_BGRA) &&
++          range->size() >= 4) {
++        nsAutoString domain;
++        Document* doc = mCanvasElement ? mCanvasElement->OwnerDoc() : nullptr;
++        if (doc && TegufoxCanvasNoise::ExtractDomain(doc, domain)) {
++          uint64_t seed = TegufoxCanvasNoise::GenerateDomainSeed(domain);
++          TegufoxCanvasNoise::InjectNoiseToBGRABuffer(
++              range->Elements(), static_cast<uint32_t>(range->size() / 4), seed);
++        }
++      }
+     }
+   });
+ }
 diff --git a/dom/canvas/TegufoxGPUProfiles.cpp b/dom/canvas/TegufoxGPUProfiles.cpp
 new file mode 100644
 index 0000000000..f40b619695
