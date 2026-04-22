@@ -170,7 +170,9 @@ tegufox-browser/
 │   ├── database.py            # Profile database
 │   ├── profile_manager.py     # Profile CRUD
 │   ├── consistency_engine.py  # Cross-layer validation
-│   └── generator_v2.py        # Profile generator
+│   ├── generator_v2.py        # Profile generator
+│   ├── webgl_dataset.py       # WebGL vendor/renderer dataset (data only)
+│   └── webgl_database.py      # WebGL selection + normalization logic
 ├── tegufox_cli/               # Command-line interface
 │   └── api.py                 # REST API server
 ├── tegufox_gui/               # Graphical interface
@@ -185,7 +187,8 @@ tegufox-browser/
 │   ├── 03-audio-context-v2.patch
 │   └── 09-branding.patch
 ├── scripts/                   # Utility scripts
-│   └── tegufox-build.sh       # Build automation
+│   ├── tegufox-build.sh       # Build automation
+│   └── refresh_webgl_dataset.py # Semi-automatic WebGL dataset refresh
 ├── tests/                     # Test suite
 ├── docs/                      # Documentation
 └── camoufox-source/           # Camoufox submodule
@@ -213,6 +216,39 @@ Tegufox is an engine. It can be used for any scenario requiring browser fingerpr
 - [GUI Guide](docs/GUI_README.md)
 - [Camoufox Patch System](docs/CAMOUFOX_PATCH_SYSTEM.md)
 - [Mouse Movement](docs/MOUSE_MOVEMENT_V2_GUIDE.md)
+
+---
+
+### 🎮 WebGL Dataset Maintenance
+
+The WebGL dataset is maintained separately from generation logic:
+
+- Dataset file: `tegufox_core/webgl_dataset.py`
+- Selection/normalization logic: `tegufox_core/webgl_database.py`
+- Refresh script: `scripts/refresh_webgl_dataset.py`
+
+Refresh workflow:
+
+```bash
+# Preview candidates from public sources (dry-run)
+make webgl-refresh
+
+# Apply merged candidates into tegufox_core/webgl_dataset.py
+make webgl-refresh-apply
+```
+
+Direct script usage:
+
+```bash
+# Dry-run
+python3 scripts/refresh_webgl_dataset.py
+
+# Apply changes
+python3 scripts/refresh_webgl_dataset.py --apply
+
+# Optional: export extracted candidates for review
+python3 scripts/refresh_webgl_dataset.py --output-candidates /tmp/webgl_candidates.json
+```
 
 ---
 

@@ -283,7 +283,8 @@ tegufox-browser/
 │   ├── consistency_engine.py  # Kiểm tra nhất quán đa tầng
 │   ├── generator_v2.py        # Tạo profile tự động
 │   ├── fingerprint_registry.py # Registry fingerprint templates
-│   └── webgl_database.py      # WebGL GPU database
+│   ├── webgl_dataset.py       # Dataset WebGL vendor/renderer (data only)
+│   └── webgl_database.py      # Logic chọn + normalize WebGL
 │
 ├── tegufox_cli/               # Command-line interface
 │   └── api.py                 # REST API server (Flask)
@@ -304,6 +305,7 @@ tegufox-browser/
 │
 ├── scripts/                   # Utility scripts
 │   ├── tegufox-build.sh       # Build automation script
+│   ├── refresh_webgl_dataset.py # Script refresh WebGL dataset bán tự động
 │   └── test_database.py       # Database testing
 │
 ├── tests/                     # Test suite
@@ -376,6 +378,39 @@ Tegufox là một **engine**. Nó có thể được dùng cho bất kỳ kịch
 ### Hướng dẫn chi tiết
 
 - 🖱️ [Mouse Movement v2](docs/MOUSE_MOVEMENT_V2_GUIDE.md)
+
+---
+
+## 🎮 Bảo trì WebGL Dataset
+
+WebGL dataset đã được tách riêng khỏi logic generate:
+
+- File dataset: `tegufox_core/webgl_dataset.py`
+- Logic chọn/normalize: `tegufox_core/webgl_database.py`
+- Script refresh: `scripts/refresh_webgl_dataset.py`
+
+Workflow refresh:
+
+```bash
+# Xem trước candidates từ nguồn public (dry-run)
+make webgl-refresh
+
+# Apply candidates đã merge vào tegufox_core/webgl_dataset.py
+make webgl-refresh-apply
+```
+
+Dùng script trực tiếp:
+
+```bash
+# Dry-run
+python3 scripts/refresh_webgl_dataset.py
+
+# Apply vào dataset
+python3 scripts/refresh_webgl_dataset.py --apply
+
+# Optional: xuất candidates để review
+python3 scripts/refresh_webgl_dataset.py --output-candidates /tmp/webgl_candidates.json
+```
 
 ---
 

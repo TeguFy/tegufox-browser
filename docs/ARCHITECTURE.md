@@ -209,6 +209,61 @@ Ví dụ cấu trúc profile bao gồm các nhóm dữ liệu: `navigator`, `scr
 
 ---
 
+## WebGL Dataset Refresh Pipeline
+
+Để dễ bảo trì định kỳ, dữ liệu WebGL đã tách khỏi logic generate:
+
+- `tegufox_core/webgl_dataset.py`: chứa dataset vendor/renderer (data only)
+- `tegufox_core/webgl_database.py`: chọn renderer, normalize, weighting, anti-software filtering
+- `scripts/refresh_webgl_dataset.py`: fetch nguồn public, parse candidate, normalize, merge
+
+### Data flow
+
+```
+Public Sources
+  (deviceandbrowserinfo, castle blog, local snapshots)
+    │
+    ▼
+scripts/refresh_webgl_dataset.py
+  ├─ extract_renderer_lines()
+  ├─ normalize_renderer()
+  ├─ infer_gpu_bucket()
+  └─ merge_candidates()
+    │
+    ▼
+tegufox_core/webgl_dataset.py (WEBGL_CONFIGS)
+    │
+    ▼
+tegufox_core/webgl_database.py
+  ├─ get_random_webgl()
+  └─ get_webgl_for_profile()
+    │
+    ▼
+Generated profile.webgl { vendor, renderer, common_on }
+```
+
+### Operational commands
+
+```bash
+# Preview refresh (dry-run, no file write)
+make webgl-refresh
+
+# Apply merge into dataset file
+make webgl-refresh-apply
+
+# Direct script usage (optional)
+python3 scripts/refresh_webgl_dataset.py --apply
+```
+
+### Merge scope (current)
+
+- `chrome/windows`: `intel`, `nvidia`, `amd`
+- `chrome/macos`: `apple`
+
+Phần mở rộng tiếp theo có thể thêm bucket cho `firefox` và `safari` khi có rule mapping đủ tin cậy.
+
+---
+
 ## Consistency Engine (Phase 3)
 
 Sau khi Phase 2 patches xảy ra, Phase 3 xây dựng một engine validator kiểm tra cross-layer consistency:

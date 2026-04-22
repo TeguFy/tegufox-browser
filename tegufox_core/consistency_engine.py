@@ -388,10 +388,14 @@ class GPUWebGLRule(Rule):
                 re.compile(r"Mozilla -- GeForce"),
             ],
             "MacIntel": [
+                re.compile(r"ANGLE \(Apple, ANGLE Metal Renderer: Apple M[1-9] ?(Pro|Max|Ultra)?"),
+                re.compile(r"ANGLE \(Apple, Apple M[1-9] ?(Pro|Max|Ultra)?"),
                 re.compile(r"Apple M[1-9] ?(Pro|Max|Ultra)? ?GPU"),
                 re.compile(r"Apple GPU"),
                 re.compile(r"AMD Radeon (Pro )?[A-Z0-9]+"),
+                re.compile(r"ANGLE \(ATI Technologies Inc\., AMD Radeon Pro .+OpenGL Engine"),
                 re.compile(r"Intel\(R\) (Iris|UHD|HD) Graphics"),
+                re.compile(r"ANGLE \(Intel Inc\., Intel\(R\) .+ OpenGL Engine"),
             ],
             "Linux x86_64": [
                 re.compile(r"Mesa"),

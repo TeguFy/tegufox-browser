@@ -38,7 +38,8 @@ SRC_APP_BUNDLE := $(OBJ_DIR)/dist/Tegufox.app
 SRC_APP_ALT    := $(OBJ_DIR)/dist/Camoufox.app
 
 .PHONY: help tegufox all camoufox-dir tegufox-patch tegufox-unpatch tegufox-repatch \
-        build rebuild run clean generate-patches status gui cli api bootstrap
+	build rebuild run clean generate-patches status gui cli api bootstrap \
+	webgl-refresh webgl-refresh-apply
 
 help:
 	@echo "Tegufox Browser Build System"
@@ -59,6 +60,8 @@ help:
 	@echo "  make rebuild          - Clean + full rebuild (fixes naming)"
 	@echo "  make tegufox-repatch  - Revert + re-apply Tegufox patches"
 	@echo "  make generate-patches - Regenerate patches from source tree"
+	@echo "  make webgl-refresh    - Preview WebGL dataset refresh from public sources"
+	@echo "  make webgl-refresh-apply - Apply refreshed WebGL dataset"
 	@echo "  make bootstrap        - Setup build environment"
 	@echo "  make status           - Show current source tree state"
 
@@ -170,6 +173,15 @@ distclean:
 generate-patches:
 	@echo "=== Regenerating Tegufox patches ==="
 	@bash scripts/tegufox-generate-patches.sh
+
+# ── WebGL Dataset Refresh ─────────────────────────────────
+webgl-refresh:
+	@echo "=== Previewing WebGL dataset refresh (dry-run) ==="
+	@venv/bin/python3 scripts/refresh_webgl_dataset.py
+
+webgl-refresh-apply:
+	@echo "=== Applying WebGL dataset refresh ==="
+	@venv/bin/python3 scripts/refresh_webgl_dataset.py --apply
 
 # ── Status ──────────────────────────────────────────────────
 status:
