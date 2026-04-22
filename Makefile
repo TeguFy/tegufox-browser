@@ -142,7 +142,7 @@ run:
 # ── User Interfaces ─────────────────────────────────────────
 gui:
 	@echo "=== Launching Tegufox GUI ==="
-	@python3 tegufox-gui
+	@venv/bin/python3 tegufox-gui
 
 cli:
 	@echo "=== Tegufox CLI ==="

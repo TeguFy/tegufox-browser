@@ -260,29 +260,44 @@ class SessionSlot:
     def _run(self):
         """Session thread: start browser then process commands forever."""
         from tegufox_automation import TegufoxSession
+        import logging
+        logger = logging.getLogger("tegufox_api")
+        
         try:
+            logger.info(f"[Session {self.session_id}] Creating TegufoxSession with profile={self.profile}, headless={self.headless}")
             self._session = TegufoxSession(profile=self.profile, headless=self.headless)
+            
+            logger.info(f"[Session {self.session_id}] Starting session...")
             self._session.start()
+            
+            logger.info(f"[Session {self.session_id}] Session started successfully, entering command loop")
             self.status = "running"
         except Exception as e:
+            logger.error(f"[Session {self.session_id}] Failed to start: {e}", exc_info=True)
             self.status = "error"
             self.error = str(e)
             return
 
+        logger.info(f"[Session {self.session_id}] Waiting for commands...")
         while True:
             item = self._cmd_q.get()
             if item is None:  # poison pill
+                logger.info(f"[Session {self.session_id}] Received stop signal")
                 break
             fn, result_q = item
             try:
+                logger.debug(f"[Session {self.session_id}] Executing command: {fn}")
                 result_q.put(("ok", fn(self._session)))
             except Exception as e:
+                logger.error(f"[Session {self.session_id}] Command failed: {e}", exc_info=True)
                 result_q.put(("err", e))
 
+        logger.info(f"[Session {self.session_id}] Stopping session...")
         try:
             self._session.stop()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"[Session {self.session_id}] Error during stop: {e}", exc_info=True)
+        logger.info(f"[Session {self.session_id}] Session stopped")
 
     def execute(self, fn, timeout: float = 60):
         """Run `fn(session)` on the session thread; block until done."""

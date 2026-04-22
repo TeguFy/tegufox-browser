@@ -104,8 +104,8 @@ class SessionConfig:
 
     # Browser settings
     headless: bool = False
-    viewport_width: Optional[int] = None
-    viewport_height: Optional[int] = None
+    viewport_width: Optional[int] = 600  # Default window width
+    viewport_height: Optional[int] = 800  # Default window height
     user_agent: Optional[str] = None
 
     # Anti-detection settings
@@ -198,30 +198,24 @@ class TegufoxSession:
         Initialize TegufoxSession
 
         Args:
-            profile: Profile name (e.g., "chrome-120", "firefox-115")
-            profile_path: Path to profile JSON file
+            profile: Profile name (e.g., "chrome-120", "firefox-115", "cyber-panther-984")
+            profile_path: DEPRECATED - use profile name instead
             config: SessionConfig object
             **kwargs: Additional config parameters (passed to SessionConfig)
         """
         self.config = config or SessionConfig(**kwargs)
 
-        # Load profile
-        if profile:
-            self.profile_path = Path(f"profiles/{profile}.json")
-        elif profile_path:
-            self.profile_path = Path(profile_path)
-        else:
-            # Default to chrome-120 profile
-            self.profile_path = Path("profiles/chrome-120.json")
+        # Load profile from database
+        from tegufox_core.database import ProfileDatabase
+        
+        db = ProfileDatabase()
+        profile_name = profile or "chrome-120"  # Default profile
+        
+        self.profile = db.get_profile(profile_name)
+        if not self.profile:
+            raise ValueError(f"Profile not found in database: {profile_name}")
 
-        if not self.profile_path.exists():
-            raise FileNotFoundError(f"Profile not found: {self.profile_path}")
-
-        # Load profile JSON
-        with open(self.profile_path, "r") as f:
-            self.profile = json.load(f)
-
-        logger.info(f"Loaded profile: {self.profile.get('name', 'unknown')}")
+        logger.info(f"Loaded profile from database: {self.profile.get('name', 'unknown')}")
 
         # Browser components
         self._camoufox: Optional[Camoufox] = None
@@ -301,18 +295,44 @@ class TegufoxSession:
             launch_opts['executable_path'] = _custom_bin
         self._camoufox = Camoufox(headless=self.config.headless, i_know_what_im_doing=True, **launch_opts)
         self.browser = self._camoufox.__enter__()
+        
+        # Add browser lifecycle event listeners for debugging
+        def on_disconnected(browser):
+            logger.warning(f"Browser disconnected: {browser}")
+        self.browser.on("disconnected", on_disconnected)
+        logger.debug(f"Browser created: {self.browser}")
 
         # Create context with Playwright-level options (viewport, UA)
         context_options = self._build_context_options()
         self.context = self.browser.new_context(**context_options)
+        
+        # Add context lifecycle event listeners
+        def on_page_created(page):
+            logger.debug(f"Context page created: {page}")
+        def on_context_close(context):
+            logger.warning(f"Context closed: {context}")
+        self.context.on("page", on_page_created)
+        self.context.on("close", on_context_close)
+        logger.debug(f"Context created: {self.context}")
 
         # Inject per-context JS fingerprint init script (sets UA, WebGL, platform, etc.)
         self._inject_context_fingerprint()
 
         # Create page
+        logger.info("Creating new page...")
         self.page = self.context.new_page()
+        
+        # Add page lifecycle event listeners
+        def on_page_close(page):
+            logger.warning(f"Page closed: {page}")
+        def on_page_crash(page):
+            logger.error(f"Page crashed: {page}")
+        self.page.on("close", on_page_close)
+        self.page.on("crash", on_page_crash)
+        logger.info(f"Page created: {self.page}")
 
         # Set page timeout
+        logger.debug(f"Setting page timeout to {self.config.page_load_timeout}ms")
         self.page.set_default_timeout(self.config.page_load_timeout)
 
         # Initialize human mouse
@@ -329,9 +349,12 @@ class TegufoxSession:
             self._keyboard = None
 
         # Validate fingerprint consistency
+        logger.info("Validating fingerprint consistency...")
         self._validate_fingerprints()
+        logger.info("Fingerprint validation complete")
 
         logger.info("Tegufox session started successfully")
+        logger.debug(f"Session state: browser={self.browser is not None}, context={self.context is not None}, page={self.page is not None}")
 
     def stop(self):
         """Stop browser session and save state"""
@@ -918,10 +941,19 @@ class TegufoxSession:
             }
         elif "screen" in self.profile:
             screen = self.profile["screen"]
+            screen_width = screen.get("width", 1920)
+            screen_height = screen.get("height", 1080)
+            
+            # In headful mode, subtract browser chrome (toolbar + address bar)
+            # Typical Firefox chrome is ~140px (toolbar ~74px + address bar ~66px)
+            # In headless mode, viewport = screen size
+            chrome_height = 0 if self.config.headless else 140
+            
             options["viewport"] = {
-                "width": screen.get("width", 1920),
-                "height": screen.get("height", 1080),
+                "width": screen_width,
+                "height": screen_height - chrome_height,
             }
+            logger.debug(f"Viewport set to {screen_width}x{screen_height - chrome_height} (screen: {screen_width}x{screen_height}, chrome: {chrome_height}px)")
 
         # User agent
         if self.config.user_agent:

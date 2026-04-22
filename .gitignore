@@ -33,6 +33,7 @@ ENV/
 *.swo
 *~
 .DS_Store
+.superpowers/
 
 # Pytest
 .pytest_cache/
