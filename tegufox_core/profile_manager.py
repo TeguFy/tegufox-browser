@@ -19,7 +19,6 @@ Phase: 1 - Week 3 Day 14
 License: MIT
 """
 
-import json
 import hashlib
 import time
 from pathlib import Path
@@ -28,7 +27,10 @@ from dataclasses import dataclass, asdict
 from enum import Enum
 import copy
 
-from .database import ProfileDatabase
+try:
+    from .database import ProfileDatabase
+except ImportError:
+    from database import ProfileDatabase
 
 # Profile templates and validation data
 BROWSER_TEMPLATES = {
@@ -474,11 +476,10 @@ class ProfileManager:
         Initialize ProfileManager
 
         Args:
-            profiles_dir: Legacy directory for JSON files (deprecated, kept for compatibility)
+            profiles_dir: Deprecated parameter, kept for backward compatibility
             db_path: Path to SQLite database (default: tegufox_core/profiles.db)
         """
         self.profiles_dir = Path(profiles_dir)
-        self.profiles_dir.mkdir(parents=True, exist_ok=True)
         
         # Initialize database
         self.db = ProfileDatabase(db_path)
@@ -564,24 +565,18 @@ class ProfileManager:
 
         template_data = BROWSER_TEMPLATES[template]
 
-        # Load full template from existing profile if available
-        template_file = self.profiles_dir / f"{template}.json"
-        if template_file.exists():
-            with open(template_file, "r") as f:
-                base_profile = json.load(f)
-        else:
-            # Create minimal profile from template data
-            base_profile = {
-                "name": name,
-                "description": template_data["name"],
-                "created": time.strftime("%Y-%m-%d"),
-                "version": "1.0",
-                "navigator": {
-                    "userAgent": template_data["user_agent"],
-                    "vendor": template_data["vendor"],
-                    "platform": template_data["platform"],
-                },
-            }
+        # Build profile from in-code template data.
+        base_profile = {
+            "name": name,
+            "description": template_data["name"],
+            "created": time.strftime("%Y-%m-%d"),
+            "version": "1.0",
+            "navigator": {
+                "userAgent": template_data["user_agent"],
+                "vendor": template_data["vendor"],
+                "platform": template_data["platform"],
+            },
+        }
 
         # Clone and update name
         profile = copy.deepcopy(base_profile)
@@ -888,25 +883,17 @@ class ProfileManager:
 
     def export_bulk(self, names: List[str], output_file: str) -> None:
         """
-        Export multiple profiles to single JSON file
+        Deprecated: file-based export has been removed.
 
         Args:
             names: List of profile names
             output_file: Output file path
         """
-        profiles = {}
-        for name in names:
-            try:
-                profiles[name] = self.load(name)
-            except FileNotFoundError:
-                print(f"Warning: Profile not found: {name}")
-
-        with open(output_file, "w") as f:
-            json.dump(profiles, f, indent=2)
+        raise NotImplementedError("Bulk file export has been removed. Use database-backed APIs.")
 
     def import_bulk(self, input_file: str, overwrite: bool = False) -> List[str]:
         """
-        Import multiple profiles from single JSON file
+        Deprecated: file-based import has been removed.
 
         Args:
             input_file: Input file path
@@ -915,19 +902,7 @@ class ProfileManager:
         Returns:
             List of imported profile names
         """
-        with open(input_file, "r") as f:
-            profiles = json.load(f)
-
-        imported = []
-        for name, profile in profiles.items():
-            if not overwrite and self.exists(name):
-                print(f"Skipping existing profile: {name}")
-                continue
-
-            self.save(profile, name)
-            imported.append(name)
-
-        return imported
+        raise NotImplementedError("Bulk file import has been removed. Use database-backed APIs.")
 
     # Template Generation
 
@@ -976,8 +951,7 @@ class ProfileManager:
         profile["os"] = os
 
         # Override navigator UA + platform with OS-specific values.
-        # create_from_template loads profiles/{browser}.json which may have
-        # a different OS (e.g. chrome-120.json is Windows but user wants macOS).
+        # Template defaults may target a different OS than requested.
         os_nav = _OS_NAVIGATOR.get(browser, {}).get(os)
         if os_nav:
             nav = profile.setdefault("navigator", {})
@@ -1135,13 +1109,13 @@ class ProfileManager:
 
 
 def validate_profile_file(
-    profile_path: str, level: str = "standard"
+    profile_name: str, level: str = "standard"
 ) -> ValidationResult:
     """
-    Validate profile file
+    Validate profile from database
 
     Args:
-        profile_path: Path to profile JSON file
+        profile_name: Profile name in database
         level: Validation level ("basic", "standard", "strict")
 
     Returns:
@@ -1149,8 +1123,7 @@ def validate_profile_file(
     """
     manager = ProfileManager()
 
-    with open(profile_path, "r") as f:
-        profile = json.load(f)
+    profile = manager.load(profile_name)
 
     validation_level = ValidationLevel(level)
     return manager.validate(profile, validation_level)

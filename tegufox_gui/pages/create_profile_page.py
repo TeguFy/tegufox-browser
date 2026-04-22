@@ -1,7 +1,6 @@
 """Create profile page widget"""
 
 import random
-import json
 from pathlib import Path
 
 from PyQt6.QtWidgets import (
@@ -768,20 +767,20 @@ class ProfileCreatorDialog(QWidget):
         return (toggle, layout)
     
     def _create_cookies_tab(self):
-        """Create Cookies tab with JSON textarea"""
+        """Create Cookies tab with plain text input"""
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(20, 20, 20, 20)  # Increased margins
         layout.setSpacing(15)
         
         # Label
-        label = QLabel("Cookies Data (JSON format)")
+        label = QLabel("Cookies Data (one cookie per line)")
         label.setStyleSheet(f"color: {DarkPalette.TEXT}; font-size: 14px; font-weight: 600;")
         layout.addWidget(label)
         
         # Textarea
         self.cookies_text = QTextEdit()
-        self.cookies_text.setPlaceholderText('[\n  {\n    name: "AEC",\n    value: "Ad49MVGdPi2AiRa29GB6LzxqGXz8KT3JMmk4CA6hV8SW-1YRCzEHuACW",\n    domain: ".google.com",\n    path: "/",\n    expires: 1708424675,\n    httpOnly: true,\n    secure: true,\n    sameSite: "Lax"\n  }\n]')
+        self.cookies_text.setPlaceholderText("sessionid=abc123; domain=.example.com; path=/; secure\ncsrftoken=xyz789; domain=.example.com; path=/")
         self.cookies_text.setStyleSheet(f"""
             QTextEdit {{
                 background-color: {DarkPalette.BACKGROUND};
@@ -1258,7 +1257,7 @@ class ProfileCreatorDialog(QWidget):
             profile = generate_profile(config)
             
             # Save profile
-            filepath = save_profile(profile, f"{name}.json")
+            filepath = save_profile(profile)
             
             # Success
             QMessageBox.information(
@@ -1304,7 +1303,7 @@ class ProfileCreatorDialog(QWidget):
             # Save each profile
             saved_paths = []
             for i, profile in enumerate(profiles):
-                filepath = save_profile(profile, f"{profile['name']}.json")
+                filepath = save_profile(profile)
                 saved_paths.append(filepath)
                 self.progress_bar.setValue(i + 1)
                 QApplication.processEvents()  # Update UI
@@ -1431,11 +1430,7 @@ class ProfileCreatorDialog(QWidget):
         if hasattr(self, 'cookies_text'):
             cookies_data = self.cookies_text.toPlainText().strip()
             if cookies_data:
-                try:
-                    import json
-                    config['cookies'] = json.loads(cookies_data)
-                except:
-                    config['cookies'] = None
+                config['cookies'] = [line.strip() for line in cookies_data.splitlines() if line.strip()]
             else:
                 config['cookies'] = None
         

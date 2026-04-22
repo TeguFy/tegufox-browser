@@ -93,7 +93,7 @@ Mỗi tầng là một vector ma anti-fraud sử dụng để phân loại brows
 
 ## C++ Patch Architecture
 
-Tất cả Tegufox patches đều sử dụng `MaskConfig.hpp` để đọc config từ JSON profile:
+Tất cả Tegufox patches đều sử dụng `MaskConfig.hpp` để đọc config từ profile config runtime:
 
 ```cpp
 // Chương lược access
@@ -201,38 +201,9 @@ class NaturalScroll:
 
 ## Profile Architecture
 
-Một profile là một JSON document mô tả tất cả các tham số fingerprint của một browser identity:
+Một profile là một bản ghi cấu hình mô tả tất cả các tham số fingerprint của một browser identity:
 
-```json
-{
-  "name": "chrome-120-win11",
-  "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) ...",
-  "screen_resolution": "1920x1080",
-  "tls_fingerprint": {
-    "ja3_hash": "579ccef312d18482fc42e2b822ca2430",
-    "cipher_suites": [...],
-    "extensions": [...]
-  },
-  "http2_fingerprint": {
-    "settings": { "HEADER_TABLE_SIZE": 65536, ... },
-    "pseudo_header_order": [":method", ":authority", ":scheme", ":path"]
-  },
-  "dns_config": {
-    "doh_enabled": true,
-    "doh_provider": "cloudflare",
-    "doh_url": "https://cloudflare-dns.com/dns-query"
-  },
-  "canvas_noise": { "enabled": true, "variance": 0.02 },
-  "webgl_config": {
-    "vendor": "Google Inc.",
-    "renderer": "ANGLE (NVIDIA, GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0)"
-  },
-  "navigator": {
-    "hardware_concurrency": 8,
-    "device_memory": 8
-  }
-}
-```
+Ví dụ cấu trúc profile bao gồm các nhóm dữ liệu: `navigator`, `screen`, `webgl`, `dns_config`, `firefox_preferences`, `fingerprint`.
 
 **Templates có sẵn**: Chrome 120, Firefox 115 ESR, Safari 17
 
@@ -243,7 +214,7 @@ Một profile là một JSON document mô tả tất cả các tham số fingerp
 Sau khi Phase 2 patches xảy ra, Phase 3 xây dựng một engine validator kiểm tra cross-layer consistency:
 
 ```
-Profile JSON
+Profile Record
      │
      ▼
 Consistency Engine
@@ -284,7 +255,7 @@ tegufox-browser/
 │   ├── test_profile_manager.py       ✅
 │   ├── test_dns_leak.py              ✅
 │   └── fingerprint/
-├── profiles/                   # Profile JSON files
+├── tegufox_core/profiles.db    # Profile database (SQLite)
 ├── docs/
 │   ├── ARCHITECTURE.md            # This file
 │   ├── CAMOUFOX_PATCH_SYSTEM.md

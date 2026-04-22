@@ -209,11 +209,10 @@ Tegufox is an engine. It can be used for any scenario requiring browser fingerpr
 ### 📚 Documentation
 
 - [Architecture Design](docs/ARCHITECTURE.md)
-- [Profile Manager Guide](docs/PROFILE_MANAGER_GUIDE.md)
-- [Automation Framework](docs/AUTOMATION_FRAMEWORK_GUIDE.md)
 - [DNS Leak Prevention](docs/DNS_LEAK_PREVENTION_GUIDE.md)
-- [GUI Integration](docs/SESSION_GUI_INTEGRATION.md)
+- [GUI Guide](docs/GUI_README.md)
 - [Camoufox Patch System](docs/CAMOUFOX_PATCH_SYSTEM.md)
+- [Mouse Movement](docs/MOUSE_MOVEMENT_V2_GUIDE.md)
 
 ---
 
@@ -458,11 +457,10 @@ Tegufox là một engine. Nó có thể được dùng cho bất kỳ kịch b�
 ### 📚 Tài liệu
 
 - [Thiết kế kiến trúc](docs/ARCHITECTURE.md)
-- [Hướng dẫn Profile Manager](docs/PROFILE_MANAGER_GUIDE.md)
-- [Framework Automation](docs/AUTOMATION_FRAMEWORK_GUIDE.md)
 - [Ngăn chặn DNS Leak](docs/DNS_LEAK_PREVENTION_GUIDE.md)
-- [Tích hợp GUI](docs/SESSION_GUI_INTEGRATION.md)
+- [Hướng dẫn GUI](docs/GUI_README.md)
 - [Hệ thống Patch Camoufox](docs/CAMOUFOX_PATCH_SYSTEM.md)
+- [Mouse Movement](docs/MOUSE_MOVEMENT_V2_GUIDE.md)
 
 ---
 

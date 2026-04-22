@@ -28,6 +28,8 @@ def test_webgl_generation():
         assert "Auto" not in webgl['renderer'], f"Found 'Auto' in renderer: {webgl['renderer']}"
         assert "Random" not in webgl['vendor'], f"Found 'Random' in vendor: {webgl['vendor']}"
         assert "Random" not in webgl['renderer'], f"Found 'Random' in renderer: {webgl['renderer']}"
+        assert "or similar" not in webgl['renderer'].lower(), f"Found generic renderer suffix: {webgl['renderer']}"
+        assert "series" not in webgl['renderer'].lower(), f"Found generic renderer family: {webgl['renderer']}"
         print("  ✓ No placeholder strings found\n")
     
     print("✅ All tests passed!")

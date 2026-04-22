@@ -1,6 +1,5 @@
 """Dashboard page widget"""
 
-import json
 from pathlib import Path
 from datetime import datetime
 
@@ -116,7 +115,7 @@ class DashboardWidget(QWidget):
         root.addLayout(bot)
 
     def _refresh_stats(self):
-        # Get profiles from ProfileManager (database) instead of JSON files
+        # Get profiles from ProfileManager (database-backed)
         profile_count = 0
         try:
             from tegufox_core.profile_manager import ProfileManager

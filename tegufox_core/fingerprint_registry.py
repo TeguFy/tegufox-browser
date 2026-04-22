@@ -13,7 +13,7 @@ produces a fingerprint, call `record()`. Hash values are client-provided
 
 from __future__ import annotations
 
-import json
+import pprint
 import sqlite3
 import time
 from pathlib import Path
@@ -133,12 +133,12 @@ class FingerprintRegistry:
     def count(self) -> int:
         return self._conn.execute("SELECT COUNT(*) FROM fingerprints").fetchone()[0]
 
-    def export_json(self, output_path: Path) -> int:
+    def export_records(self, output_path: Path) -> int:
         rows = self._conn.execute(
             "SELECT * FROM fingerprints ORDER BY id"
         ).fetchall()
         data = [dict(row) for row in rows]
-        Path(output_path).write_text(json.dumps(data, indent=2))
+        Path(output_path).write_text(pprint.pformat(data, sort_dicts=False))
         return len(data)
 
     def clear(self) -> None:

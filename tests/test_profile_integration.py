@@ -2,7 +2,6 @@
 """
 Integration test: Create profile and verify WebGL data
 """
-import json
 import os
 
 def test_profile_creation():

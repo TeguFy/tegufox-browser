@@ -19,7 +19,6 @@ Phase: 1 - Week 3 Day 13
 """
 
 import pytest
-import json
 import time
 import tempfile
 from pathlib import Path
@@ -45,18 +44,6 @@ from tegufox_automation import (
 
 
 @pytest.fixture
-def chrome_profile_path():
-    """Path to chrome-120 profile"""
-    return Path(__file__).parent.parent / "profiles" / "chrome-120.json"
-
-
-@pytest.fixture
-def firefox_profile_path():
-    """Path to firefox-115 profile"""
-    return Path(__file__).parent.parent / "profiles" / "firefox-115.json"
-
-
-@pytest.fixture
 def temp_session_dir():
     """Temporary directory for session state"""
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -79,7 +66,7 @@ def sample_session_config():
 # Test 1: Profile Loading
 
 
-def test_profile_loading_chrome(chrome_profile_path):
+def test_profile_loading_chrome():
     """Test loading Chrome profile"""
     config = SessionConfig(headless=True)
 
@@ -99,7 +86,7 @@ def test_profile_loading_chrome(chrome_profile_path):
     print("✓ Test 1 passed: Chrome profile loaded successfully")
 
 
-def test_profile_loading_firefox(firefox_profile_path):
+def test_profile_loading_firefox():
     """Test loading Firefox profile"""
     config = SessionConfig(headless=True)
 

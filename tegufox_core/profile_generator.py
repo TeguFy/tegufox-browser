@@ -3,9 +3,7 @@ Profile Generator for Tegufox Browser
 Generates browser profiles with randomized fingerprints for anti-detection.
 """
 
-import json
 import random
-import os
 from datetime import datetime
 from typing import Dict, List, Tuple, Optional
 from .webgl_database import WEBGL_CONFIGS, get_random_webgl, get_webgl_for_profile
@@ -322,7 +320,7 @@ def generate_profile(config: Dict) -> Dict:
             - webgl (dict | None): {"vendor": str, "renderer": str} or None
     
     Returns:
-        Profile dict ready to be saved as JSON
+        Profile dict ready to be saved
     """
     # Validate required fields
     required = ['name', 'os', 'browser']
@@ -492,40 +490,25 @@ def generate_bulk_profiles(config: Dict, count: int, prefix: str) -> List[Dict]:
     return profiles
 
 
-def save_profile(profile: Dict, filename: str = None, use_database: bool = True) -> str:
+def save_profile(profile: Dict) -> str:
     """
-    Save profile to database or legacy JSON file.
+    Save profile to database.
     
     Args:
         profile: Profile dict
-        filename: Filename for JSON (deprecated, only used if use_database=False)
-        use_database: Use database storage (default: True)
     
     Returns:
-        Path to database or JSON file
+        Path to database
     """
-    if use_database:
-        # Save to database
-        db = ProfileDatabase()
-        
-        # Delete existing if present
-        if db.profile_exists(profile["name"]):
-            db.delete_profile(profile["name"])
-        
-        # Create new profile
-        db.create_profile_from_dict(profile)
-        return db.db_path
-    else:
-        # Legacy JSON file storage
-        profiles_dir = os.path.join(os.path.dirname(__file__), 'profiles')
-        os.makedirs(profiles_dir, exist_ok=True)
-        
-        filepath = os.path.join(profiles_dir, filename)
-        
-        with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(profile, f, indent=2, ensure_ascii=False)
-        
-        return filepath
+    db = ProfileDatabase()
+
+    # Delete existing if present
+    if db.profile_exists(profile["name"]):
+        db.delete_profile(profile["name"])
+
+    # Create new profile
+    db.create_profile_from_dict(profile)
+    return db.db_path
 
 
 if __name__ == '__main__':
@@ -545,4 +528,4 @@ if __name__ == '__main__':
     }
     
     profile = generate_profile(test_config)
-    print(json.dumps(profile, indent=2))
+    print(f"Generated profile: {profile['name']}")

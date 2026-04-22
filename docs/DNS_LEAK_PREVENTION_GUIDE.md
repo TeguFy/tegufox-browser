@@ -1827,7 +1827,6 @@ python scripts/configure-dns.py \
 **Documentation**:
 - Design Document: `docs/DNS_LEAK_PREVENTION_DESIGN.md`
 - This User Guide: `docs/DNS_LEAK_PREVENTION_GUIDE.md`
-- HTTP/2 Fingerprint Guide: `docs/HTTP2_FINGERPRINT_GUIDE.md`
 
 **Testing Sites**:
 - DNS Leak Test: https://www.dnsleaktest.com

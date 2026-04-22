@@ -1,13 +1,11 @@
 """Platform templates and profile configuration logic"""
 
-import json
 import random
-from pathlib import Path
 from datetime import datetime
 
 
 # Platform templates (imported from tegufox-config logic)
-# NOTE: Mixed property key format per Tegufox properties.json:
+# NOTE: Mixed property key format per Tegufox config schema:
 #   - navigator.*, screen.* use DOTS (.)
 #   - canvas:*, AudioContext:*, webGl:* use COLONS (:)
 PLATFORM_TEMPLATES = {
@@ -71,8 +69,8 @@ def generate_random_seed():
     return random.randint(1000000, 9999999999)
 
 
-def create_profile_data(platform, name, output_dir="profiles"):
-    """Create a new profile from template (core logic)"""
+def create_profile_data(platform, name):
+    """Create a new profile payload from template (core logic)."""
 
     if platform not in PLATFORM_TEMPLATES:
         raise ValueError(f"Unknown platform: {platform}")
@@ -96,12 +94,4 @@ def create_profile_data(platform, name, output_dir="profiles"):
         "metadata": {"version": "1.0", "tegufox_version": "0.1.0"},
     }
 
-    # Save profile
-    output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
-
-    profile_file = output_path / f"{name}.json"
-    with open(profile_file, "w") as f:
-        json.dump(profile, f, indent=2)
-
-    return profile_file, profile
+    return profile

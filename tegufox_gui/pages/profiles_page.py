@@ -1,6 +1,6 @@
 """Profiles list page widget"""
 
-import json
+import pprint
 import sys
 import subprocess
 import tempfile
@@ -274,12 +274,13 @@ class ProfilesListWidget(QWidget):
         """)
         dlg_layout.addWidget(summary)
 
-        editor_label = QLabel("Edit Profile JSON")
+        editor_label = QLabel("Profile Data")
         editor_label.setStyleSheet(f"color: {DarkPalette.TEXT}; font-size: 13px; font-weight: 600;")
         dlg_layout.addWidget(editor_label)
 
         editor = QTextEdit()
-        editor.setPlainText(json.dumps(data, indent=2, ensure_ascii=False))
+        editor.setReadOnly(True)
+        editor.setPlainText(pprint.pformat(data, indent=2, width=100, compact=False))
         editor.setStyleSheet(f"""
             QTextEdit {{
                 background-color: {DarkPalette.BACKGROUND};
@@ -293,31 +294,11 @@ class ProfilesListWidget(QWidget):
 
         btn_row = QHBoxLayout()
         btn_row.addStretch()
-        cancel_btn = QPushButton("Cancel")
-        save_btn = QPushButton("Save")
-        save_btn.setStyleSheet(f"background-color: {DarkPalette.ACCENT}; color: white; border: none; padding: 8px 16px;")
-        btn_row.addWidget(cancel_btn)
-        btn_row.addWidget(save_btn)
+        close_btn = QPushButton("Close")
+        btn_row.addWidget(close_btn)
         dlg_layout.addLayout(btn_row)
 
-        cancel_btn.clicked.connect(dlg.reject)
-
-        def _save_profile_changes():
-            try:
-                updated = json.loads(editor.toPlainText())
-                if not isinstance(updated, dict):
-                    QMessageBox.warning(dlg, "Invalid JSON", "Profile JSON must be an object.")
-                    return
-                self.profile_manager.save(profile_name, updated)
-                self.load_profiles()
-                dlg.accept()
-                QMessageBox.information(self, "Saved", f"Updated profile: {profile_name}")
-            except json.JSONDecodeError as exc:
-                QMessageBox.warning(dlg, "Invalid JSON", f"JSON parse error: {exc}")
-            except Exception as exc:
-                QMessageBox.critical(dlg, "Save Error", str(exc))
-
-        save_btn.clicked.connect(_save_profile_changes)
+        close_btn.clicked.connect(dlg.reject)
         dlg.exec()
 
     def on_profile_delete(self, profile_name):

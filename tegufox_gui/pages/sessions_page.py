@@ -1,7 +1,7 @@
 """Sessions page widget and worker thread"""
 
 import sys
-import json
+import ast
 import queue
 import subprocess
 import threading
@@ -36,7 +36,7 @@ from tegufox_core.profile_manager import ProfileManager
 _gui_sessions = {}
 
 # Settings path for browser binary detection
-_SETTINGS_PATH = Path("data/settings.json")
+_SETTINGS_PATH = Path("data/settings.conf")
 
 
 class SessionWorker(QThread):
@@ -639,7 +639,9 @@ class SessionsWidget(QWidget):
         # Priority 1: Check settings
         if _SETTINGS_PATH.exists():
             try:
-                settings = json.loads(_SETTINGS_PATH.read_text())
+                settings = ast.literal_eval(_SETTINGS_PATH.read_text())
+                if not isinstance(settings, dict):
+                    settings = {}
                 browser_binary_setting = settings.get("browser_binary", "").strip()
                 if browser_binary_setting and Path(browser_binary_setting).exists():
                     _CUSTOM_BIN = browser_binary_setting

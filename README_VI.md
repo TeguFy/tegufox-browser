@@ -313,8 +313,8 @@ tegufox-browser/
 │
 ├── docs/                      # Documentation
 │   ├── ARCHITECTURE.md        # Architecture design
-│   ├── PROFILE_MANAGER_GUIDE.md
-│   ├── AUTOMATION_FRAMEWORK_GUIDE.md
+│   ├── DNS_LEAK_PREVENTION_GUIDE.md
+│   ├── GUI_README.md
 │   └── ...
 │
 ├── camoufox-source/           # Camoufox submodule (Firefox fork)
@@ -369,19 +369,13 @@ Tegufox là một **engine**. Nó có thể được dùng cho bất kỳ kịch
 ### Tài liệu kỹ thuật
 
 - 📖 [Thiết kế kiến trúc](docs/ARCHITECTURE.md) — Kiến trúc tổng thể của Tegufox
-- 📖 [Hướng dẫn Profile Manager](docs/PROFILE_MANAGER_GUIDE.md) — Quản lý profiles
-- 📖 [Framework Automation](docs/AUTOMATION_FRAMEWORK_GUIDE.md) — Sử dụng automation API
 - 📖 [Ngăn chặn DNS Leak](docs/DNS_LEAK_PREVENTION_GUIDE.md) — Cấu hình DoH/DoT
-- 📖 [Tích hợp GUI](docs/SESSION_GUI_INTEGRATION.md) — Sử dụng giao diện đồ họa
+- 📖 [Hướng dẫn GUI](docs/GUI_README.md) — Sử dụng giao diện đồ họa
 - 📖 [Hệ thống Patch Camoufox](docs/CAMOUFOX_PATCH_SYSTEM.md) — Hiểu về C++ patches
 
 ### Hướng dẫn chi tiết
 
-- 🎨 [Canvas Noise v2](docs/CANVAS_NOISE_V2_GUIDE.md)
-- 🎮 [WebGL Enhanced](docs/WEBGL_ENHANCED_GUIDE.md)
-- 🌐 [HTTP/2 Fingerprint](docs/HTTP2_FINGERPRINT_GUIDE.md)
 - 🖱️ [Mouse Movement v2](docs/MOUSE_MOVEMENT_V2_GUIDE.md)
-- 🔧 [Config Manager](docs/CONFIG_MANAGER_GUIDE.md)
 
 ---
 

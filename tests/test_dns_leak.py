@@ -30,7 +30,6 @@ Phase: 1 - Week 3 Day 12
 """
 
 import pytest
-import json
 import re
 import time
 import tempfile
@@ -568,14 +567,12 @@ class TestDNSLeakPreventionIntegration:
         Ensures DoH provider aligns with browser TLS/HTTP/2 fingerprint.
         For example, Chrome profiles should use Cloudflare (Chrome default).
         """
-        # Load chrome-120 profile
-        profile_path = Path("profiles/chrome-120.json")
-
-        if not profile_path.exists():
-            pytest.skip("chrome-120.json profile not found")
-
-        with open(profile_path) as f:
-            profile = json.load(f)
+        from profile_manager import ProfileManager
+        manager = ProfileManager()
+        try:
+            profile = manager.load("chrome-120")
+        except FileNotFoundError:
+            pytest.skip("chrome-120 profile not found in database")
 
         # Check DNS config
         dns_config = profile.get("dns_config", {})
@@ -591,22 +588,18 @@ class TestDNSLeakPreventionIntegration:
         Test: Standard browser templates have complete DNS configuration.
 
         Only checks the canonical browser templates (chrome-120, firefox-115, safari-17).
-        Test/dev profiles in profiles/ are excluded.
         """
-        STANDARD_TEMPLATES = ["chrome-120.json", "firefox-115.json", "safari-17.json"]
-        profiles_dir = Path("profiles")
-
-        if not profiles_dir.exists():
-            pytest.skip("profiles directory not found")
+        from profile_manager import ProfileManager
+        STANDARD_TEMPLATES = ["chrome-120", "firefox-115", "safari-17"]
+        manager = ProfileManager()
 
         found = 0
         for name in STANDARD_TEMPLATES:
-            profile_file = profiles_dir / name
-            if not profile_file.exists():
+            try:
+                profile = manager.load(name)
+            except FileNotFoundError:
                 continue
             found += 1
-            with open(profile_file) as f:
-                profile = json.load(f)
 
             assert "dns_config" in profile, (
                 f"Template {name} missing dns_config"
@@ -620,7 +613,7 @@ class TestDNSLeakPreventionIntegration:
                     f"Template {name} dns_config missing 'provider'"
                 )
 
-        assert found > 0, "No standard browser templates found"
+        assert found > 0, "No standard browser templates found in database"
 
 
 # Pytest configuration

@@ -8,7 +8,6 @@ Note: true C++ overhead can only be measured with Tegufox binary.
 This test validates the Python-side overhead + profile loading.
 """
 
-import json
 import time
 from pathlib import Path
 
@@ -20,7 +19,6 @@ from generator_v2 import generate_fleet
 from profile_manager import ProfileManager
 
 ROOT = Path(__file__).parent.parent
-PROFILES_DIR = ROOT / "profiles"
 
 
 @pytest.fixture(scope="module")
@@ -30,7 +28,7 @@ def engine():
 
 @pytest.fixture(scope="module")
 def manager():
-    return ProfileManager(str(PROFILES_DIR))
+    return ProfileManager()
 
 
 class TestConsistencyEngineBenchmark:

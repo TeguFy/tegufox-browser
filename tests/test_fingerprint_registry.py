@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import ast
 
 import pytest
 
@@ -68,15 +68,15 @@ def test_list_for_profile_orders_desc(registry):
     assert rows[0]["domain"] == "site2.com"
 
 
-def test_export_json_roundtrip(registry, tmp_path):
+def test_export_records_roundtrip(registry, tmp_path):
     registry.record("profile-a", "example.com", hash_canvas="c1")
     registry.record("profile-b", "example.com", hash_canvas="c2")
 
-    out = tmp_path / "export.json"
-    n = registry.export_json(out)
+    out = tmp_path / "export.txt"
+    n = registry.export_records(out)
     assert n == 2
 
-    data = json.loads(out.read_text())
+    data = ast.literal_eval(out.read_text())
     assert len(data) == 2
     assert {row["profile_name"] for row in data} == {"profile-a", "profile-b"}
 

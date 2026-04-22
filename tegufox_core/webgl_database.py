@@ -4,9 +4,10 @@ Real-world WebGL strings for Firefox and Safari across different hardware.
 Compiled from GitHub fingerprint databases, browser automation repos, and detection systems.
 """
 
-# Firefox sanitizes WebGL strings via SanitizeRenderer.cpp
-# See: https://searchfox.org/mozilla-central/source/dom/canvas/SanitizeRenderer.cpp
-# Firefox returns generic strings like "GeForce GTX 980, or similar" instead of exact models
+import re
+
+# Keep WebGL strings as concrete GPU models to avoid generic outputs
+# that are flagged by fingerprint checkers as only "similar" hardware.
 
 WEBGL_CONFIGS = {
     'firefox': {
@@ -24,19 +25,19 @@ WEBGL_CONFIGS = {
                 {'vendor': 'Intel', 'renderer': 'Intel(R) Arc(TM) Graphics', 'common_on': 'Desktops/laptops 2023-2026'},
             ],
             'nvidia': [
-                {'vendor': 'NVIDIA Corporation', 'renderer': 'NVIDIA GeForce GTX 750, or similar', 'common_on': 'Budget desktops 2014-2016'},
-                {'vendor': 'NVIDIA Corporation', 'renderer': 'NVIDIA GeForce GTX 960, or similar', 'common_on': 'Mid-range desktops 2015-2017'},
-                {'vendor': 'NVIDIA Corporation', 'renderer': 'NVIDIA GeForce GTX 1050, or similar', 'common_on': 'Budget laptops 2017-2019'},
-                {'vendor': 'NVIDIA Corporation', 'renderer': 'NVIDIA GeForce GTX 1050 Ti, or similar', 'common_on': 'Budget desktops 2017-2019'},
-                {'vendor': 'NVIDIA Corporation', 'renderer': 'NVIDIA GeForce GTX 1060, or similar', 'common_on': 'Mid-range 2016-2019'},
-                {'vendor': 'NVIDIA Corporation', 'renderer': 'NVIDIA GeForce GTX 1650, or similar', 'common_on': 'Budget laptops 2019-2021'},
-                {'vendor': 'NVIDIA Corporation', 'renderer': 'NVIDIA GeForce GTX 1660, or similar', 'common_on': 'Mid-range 2019-2021'},
-                {'vendor': 'NVIDIA Corporation', 'renderer': 'NVIDIA GeForce RTX 2060, or similar', 'common_on': 'Mid-range 2019-2021'},
-                {'vendor': 'NVIDIA Corporation', 'renderer': 'NVIDIA GeForce RTX 3060, or similar', 'common_on': 'Mid-range 2021-2023'},
-                {'vendor': 'NVIDIA Corporation', 'renderer': 'NVIDIA GeForce RTX 3070, or similar', 'common_on': 'High-end 2021-2023'},
-                {'vendor': 'NVIDIA Corporation', 'renderer': 'NVIDIA GeForce RTX 4060, or similar', 'common_on': 'Mid-range 2023-2025'},
-                {'vendor': 'NVIDIA Corporation', 'renderer': 'NVIDIA GeForce RTX 4070, or similar', 'common_on': 'High-end 2023-2026'},
-                {'vendor': 'NVIDIA Corporation', 'renderer': 'NVIDIA GeForce RTX 5070, or similar', 'common_on': 'High-end 2025-2026'},
+                {'vendor': 'NVIDIA Corporation', 'renderer': 'NVIDIA GeForce GTX 750', 'common_on': 'Budget desktops 2014-2016'},
+                {'vendor': 'NVIDIA Corporation', 'renderer': 'NVIDIA GeForce GTX 960', 'common_on': 'Mid-range desktops 2015-2017'},
+                {'vendor': 'NVIDIA Corporation', 'renderer': 'NVIDIA GeForce GTX 1050', 'common_on': 'Budget laptops 2017-2019'},
+                {'vendor': 'NVIDIA Corporation', 'renderer': 'NVIDIA GeForce GTX 1050 Ti', 'common_on': 'Budget desktops 2017-2019'},
+                {'vendor': 'NVIDIA Corporation', 'renderer': 'NVIDIA GeForce GTX 1060', 'common_on': 'Mid-range 2016-2019'},
+                {'vendor': 'NVIDIA Corporation', 'renderer': 'NVIDIA GeForce GTX 1650', 'common_on': 'Budget laptops 2019-2021'},
+                {'vendor': 'NVIDIA Corporation', 'renderer': 'NVIDIA GeForce GTX 1660', 'common_on': 'Mid-range 2019-2021'},
+                {'vendor': 'NVIDIA Corporation', 'renderer': 'NVIDIA GeForce RTX 2060', 'common_on': 'Mid-range 2019-2021'},
+                {'vendor': 'NVIDIA Corporation', 'renderer': 'NVIDIA GeForce RTX 3060', 'common_on': 'Mid-range 2021-2023'},
+                {'vendor': 'NVIDIA Corporation', 'renderer': 'NVIDIA GeForce RTX 3070', 'common_on': 'High-end 2021-2023'},
+                {'vendor': 'NVIDIA Corporation', 'renderer': 'NVIDIA GeForce RTX 4060', 'common_on': 'Mid-range 2023-2025'},
+                {'vendor': 'NVIDIA Corporation', 'renderer': 'NVIDIA GeForce RTX 4070', 'common_on': 'High-end 2023-2026'},
+                {'vendor': 'NVIDIA Corporation', 'renderer': 'NVIDIA GeForce RTX 5070', 'common_on': 'High-end 2025-2026'},
             ],
             'amd': [
                 {'vendor': 'AMD', 'renderer': 'Radeon HD 3200 Graphics', 'common_on': 'Old desktops 2008-2012'},
@@ -215,6 +216,37 @@ WEBGL_CONFIGS = {
     },
 }
 
+def _normalize_renderer(renderer: str) -> str:
+    """Normalize renderer strings to keep concrete GPU model names."""
+    normalized = renderer.replace(', or similar', '')
+    normalized = normalized.replace('AMD Radeon R9 200 Series', 'AMD Radeon R9 270')
+    normalized = normalized.replace('AMD Radeon RX 580 Series', 'AMD Radeon RX 580')
+    return normalized.strip()
+
+
+def _extract_end_year(common_on: str) -> int:
+    """Extract end-year from strings like '2019-2021' for weighted selection."""
+    years = re.findall(r'(\d{4})', common_on or '')
+    if not years:
+        return 2020
+    if len(years) >= 2:
+        return int(years[-1])
+    return int(years[0])
+
+
+def _get_entry_weight(common_on: str, current_year: int = 2026) -> float:
+    """Give newer hardware higher probability while keeping older options possible."""
+    end_year = _extract_end_year(common_on)
+    age = max(0, current_year - end_year)
+    if age <= 2:
+        return 6.0
+    if age <= 5:
+        return 4.0
+    if age <= 8:
+        return 2.0
+    return 1.0
+
+
 def get_random_webgl(browser: str, os: str, gpu_vendor: str = None) -> dict:
     """
     Get a random WebGL vendor/renderer pair for the given browser/OS/GPU combination.
@@ -258,10 +290,13 @@ def get_random_webgl(browser: str, os: str, gpu_vendor: str = None) -> dict:
     if not configs:
         raise ValueError(f"No WebGL configs available for {browser}/{os}/{gpu_vendor}")
     
-    config = random.choice(configs)
+    weights = [_get_entry_weight(cfg.get('common_on', '')) for cfg in configs]
+    config = random.choices(configs, weights=weights, k=1)[0]
+    renderer = _normalize_renderer(config['renderer'])
+
     return {
         'vendor': config['vendor'],
-        'renderer': config['renderer'],
+        'renderer': renderer,
         'common_on': config.get('common_on', 'Unknown')
     }
 

@@ -3,12 +3,14 @@
 Tegufox Profile Database Module
 
 SQLite database for storing browser profiles with normalized schema.
-Replaces JSON file storage with relational database.
+Replaces legacy file storage with relational database.
 
 Author: Tegufox Browser Toolkit
 Date: April 21, 2026
 License: MIT
 """
+
+import json as _json
 
 from sqlalchemy import (
     create_engine,
@@ -20,14 +22,12 @@ from sqlalchemy import (
     Text,
     DateTime,
     ForeignKey,
-    JSON,
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship, Session
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from pathlib import Path
-import json
 
 Base = declarative_base()
 
@@ -59,7 +59,7 @@ class Profile(Base):
     proxy = relationship("Proxy", back_populates="profile", uselist=False, cascade="all, delete-orphan")
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert profile to JSON-compatible dict"""
+        """Convert profile to plain Python dict"""
         result = {
             "name": self.name,
             "description": self.description,
@@ -147,11 +147,14 @@ class Navigator(Base):
     max_touch_points = Column(Integer, default=0)
     vendor = Column(String(255), default="")
     language = Column(String(50), default="en-US")
-    languages = Column(JSON)  # Store as JSON array
+    languages = Column(Text)  # Stored as serialized list
 
     profile = relationship("Profile", back_populates="navigator")
 
     def to_dict(self) -> Dict[str, Any]:
+        langs = self.languages
+        if isinstance(langs, str):
+            langs = _json.loads(langs)
         return {
             "userAgent": self.user_agent,
             "platform": self.platform,
@@ -160,7 +163,7 @@ class Navigator(Base):
             "maxTouchPoints": self.max_touch_points,
             "vendor": self.vendor,
             "language": self.language,
-            "languages": self.languages or ["en-US", "en"],
+            "languages": langs or ["en-US", "en"],
         }
 
 
@@ -173,17 +176,23 @@ class WebGL(Base):
     profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=False)
     vendor = Column(String(255))
     renderer = Column(String(255))
-    extensions = Column(JSON)  # Store as JSON array
-    parameters = Column(JSON)  # Store as JSON object
+    extensions = Column(Text)  # Stored as serialized list
+    parameters = Column(Text)  # Stored as serialized dict
 
     profile = relationship("Profile", back_populates="webgl")
 
     def to_dict(self) -> Dict[str, Any]:
+        exts = self.extensions
+        params = self.parameters
+        if isinstance(exts, str):
+            exts = _json.loads(exts)
+        if isinstance(params, str):
+            params = _json.loads(params)
         return {
             "vendor": self.vendor or "",
             "renderer": self.renderer or "",
-            "extensions": self.extensions or [],
-            "parameters": self.parameters or {},
+            "extensions": exts or [],
+            "parameters": params or {},
         }
 
 
@@ -325,7 +334,7 @@ class FirefoxPreference(Base):
     id = Column(Integer, primary_key=True)
     profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=False)
     key = Column(String(255), nullable=False)
-    value = Column(JSON)  # Can be string, int, bool
+    value = Column(Text)  # Stored as serialized value
 
     profile = relationship("Profile", back_populates="firefox_prefs")
 
@@ -376,10 +385,10 @@ class ProfileDatabase:
 
     def create_profile_from_dict(self, data: Dict[str, Any]) -> Profile:
         """
-        Create profile from JSON-compatible dict
+        Create profile from plain Python dict
 
         Args:
-            data: Profile data dict (same format as JSON files)
+            data: Profile data dict
 
         Returns:
             Profile ORM object
@@ -414,14 +423,14 @@ class ProfileDatabase:
             if "navigator" in data:
                 n = data["navigator"]
                 profile.navigator = Navigator(
-                    user_agent=n["userAgent"],
-                    platform=n["platform"],
+                    user_agent=n.get("userAgent", ""),
+                    platform=n.get("platform", ""),
                     hardware_concurrency=n.get("hardwareConcurrency", 4),
                     device_memory=n.get("deviceMemory", 8),
                     max_touch_points=n.get("maxTouchPoints", 0),
                     vendor=n.get("vendor", ""),
                     language=n.get("language", "en-US"),
-                    languages=n.get("languages", ["en-US", "en"]),
+                    languages=_json.dumps(n.get("languages", ["en-US", "en"])),
                 )
 
             # WebGL
@@ -430,8 +439,8 @@ class ProfileDatabase:
                 profile.webgl = WebGL(
                     vendor=w.get("vendor"),
                     renderer=w.get("renderer"),
-                    extensions=w.get("extensions", []),
-                    parameters=w.get("parameters", {}),
+                    extensions=_json.dumps(w.get("extensions", [])),
+                    parameters=_json.dumps(w.get("parameters", {})),
                 )
 
             # Canvas
@@ -497,7 +506,7 @@ class ProfileDatabase:
             # Firefox preferences
             if "firefox_preferences" in data:
                 for key, value in data["firefox_preferences"].items():
-                    profile.firefox_prefs.append(FirefoxPreference(key=key, value=value))
+                    profile.firefox_prefs.append(FirefoxPreference(key=key, value=_json.dumps(value)))
 
             # Proxy
             if "proxy" in data:

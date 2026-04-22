@@ -1,6 +1,8 @@
 """Settings page widget"""
 
-import json
+import ast
+import copy
+import pprint
 from pathlib import Path
 
 from PyQt6.QtWidgets import (
@@ -46,7 +48,7 @@ _DEFAULT_SETTINGS = {
     },
 }
 
-_SETTINGS_PATH = Path("data/settings.json")
+_SETTINGS_PATH = Path("data/settings.conf")
 
 
 class SettingsWidget(QWidget):
@@ -286,10 +288,12 @@ class SettingsWidget(QWidget):
             self.browser_binary_input.setText(file_path)
 
     def _load_settings(self):
-        settings = json.loads(json.dumps(_DEFAULT_SETTINGS))  # deep copy
+        settings = copy.deepcopy(_DEFAULT_SETTINGS)
         if _SETTINGS_PATH.exists():
             try:
-                loaded = json.loads(_SETTINGS_PATH.read_text())
+                loaded = ast.literal_eval(_SETTINGS_PATH.read_text())
+                if not isinstance(loaded, dict):
+                    loaded = {}
                 for k in ("profiles_dir", "api_port", "browser_binary"):
                     if k in loaded:
                         settings[k] = loaded[k]
@@ -316,7 +320,7 @@ class SettingsWidget(QWidget):
             "market_weights": {k: sp.value() for k, sp in self._weight_spins.items()},
         }
         _SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _SETTINGS_PATH.write_text(json.dumps(settings, indent=2))
+        _SETTINGS_PATH.write_text(pprint.pformat(settings, sort_dicts=True))
         QMessageBox.information(self, "Settings", "Settings saved.")
 
     def _reset_settings(self):

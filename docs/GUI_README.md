@@ -54,7 +54,7 @@ python tegufox_gui.py
    - **Platform**: Choose template (eBay, Amazon, Etsy, Generic)
    - **Bulk count**: Use slider to create multiple profiles at once
 3. Click **"Create Profile"** button
-4. Profiles are saved to `profiles/` directory
+4. Profiles are saved to the SQLite profile database
 
 ### View Profiles
 
@@ -66,7 +66,7 @@ python tegufox_gui.py
 
 1. Click the 🗑️ icon on any profile card
 2. Confirm deletion in the dialog
-3. Profile file is permanently removed
+3. Profile record is permanently removed
 
 ## Architecture
 
@@ -74,7 +74,7 @@ python tegufox_gui.py
 
 - **Framework**: PyQt6 (Python 3.14.3)
 - **UI Style**: Custom dark theme with Catppuccin colors
-- **Data Format**: JSON profiles compatible with Camoufox MaskConfig
+- **Data Format**: Database-backed profile records
 - **Integration**: Uses `tegufox-config` CLI logic internally
 
 ### Project Structure
@@ -100,7 +100,7 @@ CreateProfileWidget.create_profile()
     ↓
 create_profile_data() → Generates JSON
     ↓
-profiles/{name}.json (saved to disk)
+ProfileDatabase (saved in SQLite)
     ↓
 profile_created signal
     ↓
@@ -136,27 +136,7 @@ Each platform template includes:
 
 ### Profile Structure
 
-```json
-{
-  "name": "seller-001",
-  "platform": "ebay-seller",
-  "created": "2026-04-13T...",
-  "description": "eBay seller profile optimized...",
-  "config": {
-    "navigator:userAgent": "Mozilla/5.0...",
-    "navigator:platform": "Win32",
-    "screen:width": 1920,
-    "screen:height": 1080,
-    "canvas:seed": 8814243791,
-    "webGl:vendor": "Google Inc. (NVIDIA)",
-    ...
-  },
-  "metadata": {
-    "version": "1.0",
-    "tegufox_version": "0.1.0"
-  }
-}
-```
+Profiles are stored as structured records in SQLite and loaded through `ProfileManager`.
 
 ## Development
 
@@ -213,8 +193,8 @@ python --version  # Should be 3.10+
 
 **Profiles not showing:**
 ```bash
-# Check profiles directory exists
-ls -la profiles/
+# Check database exists
+ls -la tegufox_core/profiles.db
 
 # Click "Refresh" button in GUI
 ```
