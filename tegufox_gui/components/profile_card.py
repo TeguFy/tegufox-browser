@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton
+from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QCheckBox
 from PyQt6.QtCore import Qt, pyqtSignal
 
 from tegufox_gui.utils.styles import DarkPalette
@@ -26,17 +26,18 @@ def _detect_browser_os(profile_data: dict) -> tuple:
 
 
 class ProfileCard(QFrame):
-    """Compact profile row — 56 px, shows browser/OS/score/date."""
+    """Compact profile row — 56 px, shows browser/OS/date."""
 
     clicked = pyqtSignal(str)
     delete_requested = pyqtSignal(str)
     launch_requested = pyqtSignal(str)
+    selection_changed = pyqtSignal(str, bool)  # profile_name, is_selected
 
-    def __init__(self, profile_data: dict, score=None, parent=None):
+    def __init__(self, profile_data: dict, parent=None):
         super().__init__(parent)
         self.profile_data = profile_data
-        self.score = score
         self._name = profile_data.get("name", "Unnamed")
+        self._selected = False
         self._setup_ui()
 
     def _setup_ui(self):
@@ -58,6 +59,28 @@ class ProfileCard(QFrame):
         row.setContentsMargins(16, 8, 12, 8)
         row.setSpacing(10)
 
+        # Checkbox for selection
+        self.checkbox = QCheckBox()
+        self.checkbox.setFixedSize(20, 20)
+        self.checkbox.setStyleSheet(f"""
+            QCheckBox::indicator {{
+                width: 18px;
+                height: 18px;
+                border: 2px solid {DarkPalette.BORDER};
+                border-radius: 3px;
+                background-color: {DarkPalette.BACKGROUND};
+            }}
+            QCheckBox::indicator:hover {{
+                border-color: {DarkPalette.ACCENT};
+            }}
+            QCheckBox::indicator:checked {{
+                background-color: {DarkPalette.ACCENT};
+                border-color: {DarkPalette.ACCENT};
+            }}
+        """)
+        self.checkbox.stateChanged.connect(self._on_checkbox_changed)
+        row.addWidget(self.checkbox)
+
         browser_str, platform_str = _detect_browser_os(self.profile_data)
         badge = QLabel(browser_str)
         badge.setFixedWidth(120)
@@ -76,25 +99,16 @@ class ProfileCard(QFrame):
         plat_lbl.setStyleSheet(f"color: {DarkPalette.TEXT_DIM}; font-size: 11px;")
         row.addWidget(plat_lbl)
 
-        if self.score is not None:
-            sc_color = "#a6e3a1" if self.score >= 0.8 else ("#f9e2af" if self.score >= 0.6 else DarkPalette.RED)
-            sc_lbl = QLabel(f"● {self.score:.2f}")
-            sc_lbl.setStyleSheet(f"color: {sc_color}; font-size: 12px; font-weight: 600;")
-        else:
-            sc_lbl = QLabel("—")
-            sc_lbl.setStyleSheet(f"color: {DarkPalette.TEXT_DIM}; font-size: 12px;")
-        sc_lbl.setFixedWidth(52)
-        row.addWidget(sc_lbl)
-
         created = self.profile_data.get("created", "")
         date_str = "—"
         if created:
             try:
-                date_str = datetime.fromisoformat(created).strftime("%b %d")
+                dt = datetime.fromisoformat(created)
+                date_str = dt.strftime("%b %d %H:%M")
             except Exception:
                 pass
         date_lbl = QLabel(date_str)
-        date_lbl.setFixedWidth(46)
+        date_lbl.setFixedWidth(90)
         date_lbl.setStyleSheet(f"color: {DarkPalette.TEXT_DIM}; font-size: 11px;")
         row.addWidget(date_lbl)
 
@@ -126,10 +140,24 @@ class ProfileCard(QFrame):
         del_btn.clicked.connect(lambda: self.delete_requested.emit(self._name))
         row.addWidget(del_btn)
 
+    def _on_checkbox_changed(self, state):
+        """Handle checkbox state change"""
+        self._selected = (state == Qt.CheckState.Checked.value)
+        self.selection_changed.emit(self._name, self._selected)
+
+    def set_selected(self, selected: bool):
+        """Set selection state programmatically"""
+        self._selected = selected
+        self.checkbox.setChecked(selected)
+
+    def is_selected(self) -> bool:
+        """Get selection state"""
+        return self._selected
+
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             child = self.childAt(event.pos())
-            if child is None or not isinstance(child, QPushButton):
+            if child is None or not isinstance(child, (QPushButton, QCheckBox)):
                 self.clicked.emit(self._name)
         super().mousePressEvent(event)
 

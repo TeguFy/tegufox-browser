@@ -98,7 +98,10 @@ class Profile(Base):
             result["fonts"] = [f.name for f in sorted(self.fonts, key=lambda x: x.name)]
 
         if self.firefox_prefs:
-            result["firefox_preferences"] = {pref.key: pref.value for pref in self.firefox_prefs}
+            result["firefox_preferences"] = {
+                pref.key: _json.loads(pref.value) if isinstance(pref.value, str) else pref.value
+                for pref in self.firefox_prefs
+            }
 
         if self.proxy:
             result["proxy"] = self.proxy.to_dict()

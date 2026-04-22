@@ -933,27 +933,16 @@ class TegufoxSession:
         """Build Playwright context options (viewport, UA — applied per context)"""
         options: Dict[str, Any] = {}
 
-        # Viewport
-        if self.config.viewport_width and self.config.viewport_height:
-            options["viewport"] = {
-                "width": self.config.viewport_width,
-                "height": self.config.viewport_height,
-            }
-        elif "screen" in self.profile:
-            screen = self.profile["screen"]
-            screen_width = screen.get("width", 1920)
-            screen_height = screen.get("height", 1080)
-            
-            # In headful mode, subtract browser chrome (toolbar + address bar)
-            # Typical Firefox chrome is ~140px (toolbar ~74px + address bar ~66px)
-            # In headless mode, viewport = screen size
-            chrome_height = 0 if self.config.headless else 140
-            
-            options["viewport"] = {
-                "width": screen_width,
-                "height": screen_height - chrome_height,
-            }
-            logger.debug(f"Viewport set to {screen_width}x{screen_height - chrome_height} (screen: {screen_width}x{screen_height}, chrome: {chrome_height}px)")
+        # Viewport - always use 600x800 as default startup size
+        # This can be overridden by explicit config values
+        viewport_width = self.config.viewport_width or 600
+        viewport_height = self.config.viewport_height or 800
+        
+        options["viewport"] = {
+            "width": viewport_width,
+            "height": viewport_height,
+        }
+        logger.debug(f"Viewport set to {viewport_width}x{viewport_height}")
 
         # User agent
         if self.config.user_agent:
@@ -1061,7 +1050,7 @@ class TegufoxSession:
         # Chrome profiles are DEPRECATED (moved to profiles/deprecated-chrome/).
         # Reason: Firefox engine cannot produce Chrome-matching audio/canvas fingerprints.
         fp_data = self.profile.get('fingerprint', {})
-        _audio_seed = int(fp_data.get('audio_seed', fp_data.get('canvas_seed', 1234567))) & 0xFFFFFFFF
+        _audio_seed = int(fp_data.get('audio_seed') or fp_data.get('canvas_seed') or 1234567) & 0xFFFFFFFF
         _audio_mode = self.profile.get('audioMode', 'real')  # Always 'real' for Firefox/Safari
         _audio_noise = self.profile.get('audioNoise', 0.00001)
         _audio_sparse = self.profile.get('audioSparseRate', 10)
@@ -1082,12 +1071,12 @@ class TegufoxSession:
         nav = profile.get('navigator', {})
         fp_data = profile.get('fingerprint', {})
 
-        cr_seed = int(fp_data.get('canvas_seed', fp_data.get('audio_seed', 12345678))) & 0xFFFFFFFF
-        audio_seed_int = int(fp_data.get('audio_seed', fp_data.get('canvas_seed', 1234567))) & 0xFFFFFFFF
+        cr_seed = int(fp_data.get('canvas_seed') or fp_data.get('audio_seed') or 12345678) & 0xFFFFFFFF
+        audio_seed_int = int(fp_data.get('audio_seed') or fp_data.get('canvas_seed') or 1234567) & 0xFFFFFFFF
         is_mobile = os_type in ('android', 'ios')
 
         timezone = profile.get('timezone', '')
-        tz_offset = profile.get('timezoneOffset', None)
+        tz_offset = profile.get('timezoneOffset', 0)  # Default to 0 (UTC) if not set
 
         chrome_ver = 120
         chrome_full_ver = '120.0.6099.130'
