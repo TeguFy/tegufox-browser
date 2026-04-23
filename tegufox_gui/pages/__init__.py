@@ -5,6 +5,7 @@ from .profiles_page import ProfilesListWidget
 from .create_profile_page import CreateProfileWidget
 from .sessions_page import SessionsWidget
 from .settings_page import SettingsWidget
+from .proxies_page import ProxiesWidget
 
 __all__ = [
     "DashboardWidget",
@@ -12,4 +13,5 @@ __all__ = [
     "CreateProfileWidget",
     "SessionsWidget",
     "SettingsWidget",
+    "ProxiesWidget",
 ]

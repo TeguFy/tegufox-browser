@@ -31,6 +31,7 @@ class ProfileCard(QFrame):
     clicked = pyqtSignal(str)
     delete_requested = pyqtSignal(str)
     launch_requested = pyqtSignal(str)
+    stop_requested = pyqtSignal(str)
     selection_changed = pyqtSignal(str, bool)  # profile_name, is_selected
 
     def __init__(self, profile_data: dict, parent=None):
@@ -38,6 +39,7 @@ class ProfileCard(QFrame):
         self.profile_data = profile_data
         self._name = profile_data.get("name", "Unnamed")
         self._selected = False
+        self._status = "stopped"  # stopped, loading, active
         self._setup_ui()
 
     def _setup_ui(self):
@@ -112,38 +114,105 @@ class ProfileCard(QFrame):
         date_lbl.setStyleSheet(f"color: {DarkPalette.TEXT_DIM}; font-size: 11px;")
         row.addWidget(date_lbl)
 
-        launch_btn = QPushButton("▶")
-        launch_btn.setFixedSize(32, 32)
-        launch_btn.setToolTip("Launch Browser")
-        launch_btn.setStyleSheet(f"""
+        self.launch_btn = QPushButton("▶")
+        self.launch_btn.setFixedSize(32, 32)
+        self.launch_btn.setToolTip("Launch Browser")
+        self.launch_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: {DarkPalette.ACCENT};
                 color: white; border: none;
                  font-size: 13px; font-weight: bold;
             }}
             QPushButton:hover {{ background-color: #7aa2f7; }}
+            QPushButton:disabled {{
+                background-color: {DarkPalette.CARD};
+                color: {DarkPalette.TEXT_DIM};
+            }}
         """)
-        launch_btn.clicked.connect(lambda: self.launch_requested.emit(self._name))
-        row.addWidget(launch_btn)
+        self.launch_btn.clicked.connect(self._on_launch_clicked)
+        row.addWidget(self.launch_btn)
 
-        del_btn = QPushButton("✕")
-        del_btn.setFixedSize(32, 32)
-        del_btn.setToolTip("Delete Profile")
-        del_btn.setStyleSheet(f"""
+        self.del_btn = QPushButton("✕")
+        self.del_btn.setFixedSize(32, 32)
+        self.del_btn.setToolTip("Delete Profile")
+        self.del_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: rgba(243,139,168,0.12);
                 color: {DarkPalette.RED}; border: none;
                  font-size: 13px; font-weight: bold;
             }}
             QPushButton:hover {{ background-color: rgba(243,139,168,0.25); }}
+            QPushButton:disabled {{
+                background-color: {DarkPalette.CARD};
+                color: {DarkPalette.TEXT_DIM};
+            }}
         """)
-        del_btn.clicked.connect(lambda: self.delete_requested.emit(self._name))
-        row.addWidget(del_btn)
+        self.del_btn.clicked.connect(lambda: self.delete_requested.emit(self._name))
+        row.addWidget(self.del_btn)
 
     def _on_checkbox_changed(self, state):
         """Handle checkbox state change"""
         self._selected = (state == Qt.CheckState.Checked.value)
         self.selection_changed.emit(self._name, self._selected)
+
+    def _on_launch_clicked(self):
+        """Handle launch/stop button click based on current status"""
+        if self._status == "stopped":
+            self.launch_requested.emit(self._name)
+        elif self._status == "active":
+            self.stop_requested.emit(self._name)
+        # Do nothing if loading
+
+    def set_status(self, status: str):
+        """Update profile status and UI accordingly
+        
+        Args:
+            status: One of 'stopped', 'loading', 'active'
+        """
+        self._status = status
+        
+        if status == "stopped":
+            self.launch_btn.setText("▶")
+            self.launch_btn.setToolTip("Launch Browser")
+            self.launch_btn.setEnabled(True)
+            self.del_btn.setEnabled(True)
+            self.launch_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {DarkPalette.ACCENT};
+                    color: white; border: none;
+                    font-size: 13px; font-weight: bold;
+                }}
+                QPushButton:hover {{ background-color: #7aa2f7; }}
+            """)
+        elif status == "loading":
+            self.launch_btn.setText("⏳")
+            self.launch_btn.setToolTip("Launching...")
+            self.launch_btn.setEnabled(False)
+            self.del_btn.setEnabled(False)
+            self.launch_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {DarkPalette.CARD};
+                    color: {DarkPalette.TEXT_DIM}; border: none;
+                    font-size: 13px; font-weight: bold;
+                }}
+            """)
+        elif status == "active":
+            self.launch_btn.setText("■")
+            self.launch_btn.setToolTip("Stop Browser")
+            self.launch_btn.setEnabled(True)
+            self.del_btn.setEnabled(False)
+            self.launch_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {DarkPalette.RED};
+                    color: white; border: none;
+                    font-size: 13px; font-weight: bold;
+                }}
+                QPushButton:hover {{ background-color: #f38ba8; }}
+            """)
+
+    def get_status(self) -> str:
+        """Get current profile status"""
+        return self._status
 
     def set_selected(self, selected: bool):
         """Set selection state programmatically"""

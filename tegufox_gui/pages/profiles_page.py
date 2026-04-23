@@ -4,6 +4,7 @@ import pprint
 import sys
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 from PyQt6.QtWidgets import (
@@ -20,11 +21,78 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QDialog,
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
+import queue
 
 from tegufox_gui.utils.styles import DarkPalette
 from tegufox_gui.components import ProfileCard
 from tegufox_core.profile_manager import ProfileManager
+
+
+class BrowserSessionWorker(QThread):
+    """Worker thread to launch and monitor a browser session"""
+    
+    status_changed = pyqtSignal(str, str)  # profile_name, status
+    
+    def __init__(self, profile_name: str, parent=None):
+        super().__init__(parent)
+        self.profile_name = profile_name
+        self._stop_requested = False
+        
+    def run(self):
+        """Launch browser and wait for it to close"""
+        try:
+            self.status_changed.emit(self.profile_name, "active")
+            
+            cwd = str(Path.cwd())
+            script_lines = [
+                "import sys, time, warnings, logging",
+                "logging.basicConfig(level=logging.DEBUG, format='%(name)s %(levelname)s %(message)s')",
+                "warnings.filterwarnings('ignore')",
+                f"sys.path.insert(0, {repr(cwd)})",
+                "from tegufox_automation import TegufoxSession, SessionConfig",
+                f"profile_name = {repr(self.profile_name)}",
+                "try:",
+                "    with TegufoxSession(profile_name, config=SessionConfig(headless=False)) as sess:",
+                "        sess.page.goto('https://www.browserscan.net/bot-detection')",
+                "        while True:",
+                "            try: sess.page.title(); time.sleep(1)",
+                "            except: break",
+                "except Exception as e:",
+                "    import traceback; traceback.print_exc()",
+                "    input('Press Enter to close...')",
+            ]
+            
+            fd, tmp = tempfile.mkstemp(suffix='.py', prefix='tgf_')
+            import os
+            os.close(fd)
+            Path(tmp).write_text("\n".join(script_lines))
+            
+            log_file = Path(cwd) / "tegufox_launch.log"
+            with open(log_file, 'w') as lf:
+                self.process = subprocess.Popen(
+                    [sys.executable, tmp], 
+                    stdout=lf, 
+                    stderr=lf
+                )
+                
+            # Wait for process to complete
+            while self.process.poll() is None and not self._stop_requested:
+                time.sleep(0.5)
+                
+            if self._stop_requested and self.process.poll() is None:
+                self.process.terminate()
+                self.process.wait(timeout=5)
+                
+        except Exception as e:
+            print(f"[BrowserSessionWorker] Error: {e}")
+        finally:
+            self.status_changed.emit(self.profile_name, "stopped")
+    
+    def stop(self):
+        """Request the browser session to stop"""
+        self._stop_requested = True
+
 
 class ProfilesListWidget(QWidget):
     """Profile list page with live search, sort, and compact rows."""
@@ -37,6 +105,7 @@ class ProfilesListWidget(QWidget):
         self._main_window = None  # Will be set by main window
         self.profile_manager = ProfileManager()
         self._selected_profiles = set()  # Track selected profile names
+        self._active_sessions = {}  # profile_name -> BrowserSessionWorker
         self._setup_ui()
         self.load_profiles()
 
@@ -224,6 +293,7 @@ class ProfilesListWidget(QWidget):
                     card.clicked.connect(self.on_profile_clicked)
                     card.delete_requested.connect(self.on_profile_delete)
                     card.launch_requested.connect(self.on_profile_launch)
+                    card.stop_requested.connect(self.on_profile_stop)
                     card.selection_changed.connect(self.on_selection_changed)
                     self._all_cards.append(card)
                 except Exception as e:
@@ -422,6 +492,7 @@ class ProfilesListWidget(QWidget):
             QMessageBox.critical(self, "Error", str(exc))
 
     def on_profile_launch(self, profile_name):
+        """Launch browser profile in a separate process"""
         # Verify profile exists in database
         try:
             data = self.profile_manager.load(profile_name)
@@ -431,31 +502,40 @@ class ProfilesListWidget(QWidget):
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to load profile: {e}")
             return
-        try:
-            cwd = str(Path.cwd())
-            script_lines = [
-                "import sys, time, warnings, logging",
-                "logging.basicConfig(level=logging.DEBUG, format='%(name)s %(levelname)s %(message)s')",
-                "warnings.filterwarnings('ignore')",
-                f"sys.path.insert(0, {repr(cwd)})",
-                "from tegufox_automation import TegufoxSession, SessionConfig",
-                f"profile_name = {repr(profile_name)}",
-                "try:",
-                "    with TegufoxSession(profile_name, config=SessionConfig(headless=False)) as sess:",
-                "        sess.page.goto('https://www.browserscan.net/bot-detection')",
-                "        while True:",
-                "            try: sess.page.title(); time.sleep(1)",
-                "            except: break",
-                "except Exception as e:",
-                "    import traceback; traceback.print_exc()",
-                "    input('Press Enter to close...')",
-            ]
-            import tempfile, os
-            fd, tmp = tempfile.mkstemp(suffix='.py', prefix='tgf_')
-            os.close(fd)
-            Path(tmp).write_text("\n".join(script_lines))
-            log_file = Path(cwd) / "tegufox_launch.log"
-            with open(log_file, 'w') as lf:
-                subprocess.Popen([sys.executable, tmp], stdout=lf, stderr=lf)
-        except Exception as exc:
-            QMessageBox.critical(self, "Launch Error", str(exc))
+        
+        # Find the card and set it to loading
+        card = self._find_card(profile_name)
+        if card:
+            card.set_status("loading")
+        
+        # Create and start worker thread
+        worker = BrowserSessionWorker(profile_name)
+        worker.status_changed.connect(self._on_session_status_changed)
+        worker.start()
+        
+        self._active_sessions[profile_name] = worker
+    
+    def on_profile_stop(self, profile_name):
+        """Stop a running browser session"""
+        worker = self._active_sessions.get(profile_name)
+        if worker:
+            worker.stop()
+            # Status will be updated via status_changed signal
+    
+    def _on_session_status_changed(self, profile_name: str, status: str):
+        """Handle session status changes from worker thread"""
+        card = self._find_card(profile_name)
+        if card:
+            card.set_status(status)
+        
+        # Clean up worker if stopped
+        if status == "stopped" and profile_name in self._active_sessions:
+            worker = self._active_sessions.pop(profile_name)
+            worker.wait()  # Wait for thread to finish
+    
+    def _find_card(self, profile_name: str):
+        """Find profile card by name"""
+        for card in self._all_cards:
+            if card._name == profile_name:
+                return card
+        return None

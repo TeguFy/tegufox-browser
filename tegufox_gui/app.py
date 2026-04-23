@@ -32,6 +32,7 @@ from tegufox_gui.pages import (
     CreateProfileWidget,
     SessionsWidget,
     SettingsWidget,
+    ProxiesWidget,
 )
 
 
@@ -76,6 +77,9 @@ class TegufoxProfileManager(QMainWindow):
             self.profiles_list.refresh_profiles
         )
         self.content_stack.addWidget(self.create_profile_page)
+
+        self.proxies_page = ProxiesWidget()
+        self.content_stack.addWidget(self.proxies_page)
 
         self.settings_page = SettingsWidget()
         self.content_stack.addWidget(self.settings_page)
@@ -135,6 +139,11 @@ class TegufoxProfileManager(QMainWindow):
         layout.addWidget(sessions_btn)
         self.nav_buttons.append(sessions_btn)
 
+        proxies_btn = SidebarButton("Proxies", "🔌")
+        proxies_btn.clicked.connect(lambda: self.switch_page(4))
+        layout.addWidget(proxies_btn)
+        self.nav_buttons.append(proxies_btn)
+
         layout.addSpacing(8)
         profiles_label = QLabel("PROFILES")
         profiles_label.setStyleSheet(
@@ -155,7 +164,7 @@ class TegufoxProfileManager(QMainWindow):
         layout.addStretch()
 
         settings_btn = SidebarButton("Settings", "⚙️")
-        settings_btn.clicked.connect(lambda: self.switch_page(4))
+        settings_btn.clicked.connect(lambda: self.switch_page(5))
         layout.addWidget(settings_btn)
         self.nav_buttons.append(settings_btn)
 
