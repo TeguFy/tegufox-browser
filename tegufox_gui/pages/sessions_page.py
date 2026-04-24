@@ -1,4 +1,12 @@
-"""Sessions page widget and worker thread"""
+"""
+Sessions page widget and worker thread
+
+Proxy Troubleshooting:
+- If you get 502 Bad Gateway: The proxy may be down or blocked. Test the proxy first.
+- If authentication fails: Check username/password in proxy settings
+- If connection times out: The proxy server may be unreachable
+- Use the "Test" button to verify proxy before launching sessions
+"""
 
 import sys
 import ast
@@ -31,6 +39,7 @@ from PyQt6.QtGui import QPalette, QColor, QPixmap
 
 from tegufox_gui.utils.styles import DarkPalette
 from tegufox_core.profile_manager import ProfileManager
+from tegufox_core.proxy_manager import ProxyManager
 
 # Shared session store
 _gui_sessions = {}
@@ -48,12 +57,13 @@ class SessionWorker(QThread):
 
     status_changed = pyqtSignal(str, str)  # (session_id, status)
 
-    def __init__(self, session_id: str, profile: str, headless: bool, browser_binary: str = None, parent=None):
+    def __init__(self, session_id: str, profile: str, headless: bool, browser_binary: str = None, proxy: str = None, parent=None):
         super().__init__(parent)
         self.session_id = session_id
         self.profile = profile
         self.headless = headless
         self.browser_binary = browser_binary
+        self.proxy = proxy
         self.status = "starting"
         self.error: str = ""
         self.created_at = time.time()
@@ -62,12 +72,60 @@ class SessionWorker(QThread):
 
     def run(self):
         from tegufox_automation import TegufoxSession, SessionConfig
+        from tegufox_core.proxy_manager import ProxyManager, format_proxy_url
         import logging
         logger = logging.getLogger("tegufox_gui")
         
         try:
-            logger.info(f"[Session {self.session_id}] Creating TegufoxSession with profile={self.profile}, headless={self.headless}")
-            _cfg = SessionConfig(headless=self.headless, browser_binary=self.browser_binary)
+            logger.info(f"[Session {self.session_id}] Creating TegufoxSession with profile={self.profile}, headless={self.headless}, proxy={self.proxy}")
+            
+            # Load proxy configuration if specified
+            proxy_config = None
+            proxy_data = None
+            if self.proxy and self.proxy != "None":
+                try:
+                    pm = ProxyManager()
+                    proxy_data = pm.load(self.proxy)
+                    if proxy_data:
+                        # Check proxy status
+                        if proxy_data.get('status') == 'failed':
+                            logger.warning(f"[Session {self.session_id}] Proxy {self.proxy} is marked as failed, attempting anyway...")
+                        
+                        # Build proxy config for Playwright
+                        # IMPORTANT: Playwright expects server WITHOUT credentials
+                        # Format: {"server": "http://host:port", "username": "...", "password": "..."}
+                        protocol = proxy_data.get('protocol', 'http')
+                        host = proxy_data['host']
+                        port = proxy_data['port']
+                        
+                        proxy_config = {
+                            "server": f"{protocol}://{host}:{port}"
+                        }
+                        
+                        # Add authentication if present
+                        if proxy_data.get("username") and proxy_data.get("password"):
+                            proxy_config["username"] = proxy_data["username"]
+                            proxy_config["password"] = proxy_data["password"]
+                        
+                        logger.info(f"[Session {self.session_id}] Proxy configured: {host}:{port} (status: {proxy_data.get('status', 'unknown')})")
+                        logger.debug(f"[Session {self.session_id}] Proxy config: {proxy_config}")
+                except Exception as e:
+                    logger.error(f"[Session {self.session_id}] Failed to load proxy: {e}", exc_info=True)
+            
+            # Manual timezone from proxy record (if user set it in ProxyManager).
+            # Overrides ip-api lookup — ip-api can disagree with detection-site
+            # DBs (e.g. HostPapa IPs report USA in ip-api but Lithuania in
+            # browserscan). User knows their proxy provider's claimed country.
+            proxy_tz = (proxy_data or {}).get("timezone") if proxy_data else None
+            if proxy_tz:
+                logger.info(f"[Session {self.session_id}] Using manual timezone override: {proxy_tz}")
+
+            _cfg = SessionConfig(
+                headless=self.headless,
+                browser_binary=self.browser_binary,
+                proxy=proxy_config,
+                timezone=proxy_tz,
+            )
             self._session = TegufoxSession(profile=self.profile, config=_cfg)
             
             logger.info(f"[Session {self.session_id}] Starting session...")
@@ -162,7 +220,7 @@ class SessionsWidget(QWidget):
         """)
         hdr.addWidget(self._session_count_lbl)
         hdr.addStretch()
-        reload_btn = QPushButton("↻  Refresh Profiles")
+        reload_btn = QPushButton("↻  Refresh")
         reload_btn.setFixedHeight(34)
         reload_btn.setStyleSheet(f"""
             QPushButton {{
@@ -180,7 +238,7 @@ class SessionsWidget(QWidget):
                 background-color: {DarkPalette.HOVER};
             }}
         """)
-        reload_btn.clicked.connect(self._reload_profiles)
+        reload_btn.clicked.connect(self._reload_all)
         hdr.addWidget(reload_btn)
         root.addLayout(hdr)
 
@@ -244,6 +302,60 @@ class SessionsWidget(QWidget):
         self._reload_profiles()
         lf_main.addWidget(self.profile_combo)
 
+        lf_main.addWidget(QLabel("PROXY (OPTIONAL)", styleSheet=LABEL_STYLE))
+        proxy_row = QHBoxLayout()
+        proxy_row.setSpacing(8)
+        self.proxy_combo = QComboBox()
+        self.proxy_combo.setFixedHeight(INPUT_H)
+        self.proxy_combo.setStyleSheet(f"""
+            QComboBox {{
+                background-color: {DarkPalette.BACKGROUND};
+                color: {DarkPalette.TEXT};
+                border: 1px solid transparent;
+                border-radius: 6px;
+                padding: 8px 12px;
+                font-size: 13px;
+            }}
+            QComboBox:hover {{ 
+                border-color: rgba(124, 58, 237, 0.3);
+                background-color: rgba(124, 58, 237, 0.03);
+            }}
+            QComboBox:focus {{ border-color: {DarkPalette.ACCENT}; }}
+            QComboBox::drop-down {{ border: none; width: 24px; }}
+            QComboBox QAbstractItemView {{
+                background-color: {DarkPalette.CARD};
+                color: {DarkPalette.TEXT};
+                selection-background-color: {DarkPalette.ACCENT};
+                border: 1px solid rgba(124, 58, 237, 0.2);
+                border-radius: 6px;
+            }}
+        """)
+        self._reload_proxies()
+        proxy_row.addWidget(self.proxy_combo, 1)
+        
+        # Test proxy button
+        test_proxy_btn = QPushButton("Test")
+        test_proxy_btn.setFixedSize(60, INPUT_H)
+        test_proxy_btn.setToolTip("Test selected proxy connection")
+        test_proxy_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                color: {DarkPalette.ACCENT};
+                border: 1px solid rgba(124, 58, 237, 0.3);
+                border-radius: 6px;
+                font-size: 12px;
+                font-weight: 600;
+            }}
+            QPushButton:hover {{
+                background-color: rgba(124, 58, 237, 0.12);
+                border-color: {DarkPalette.ACCENT};
+            }}
+        """)
+        test_proxy_btn.clicked.connect(self._test_proxy)
+        proxy_row.addWidget(test_proxy_btn)
+        
+        lf_main.addLayout(proxy_row)
+
         lf_main.addWidget(QLabel("OPTIONS", styleSheet=LABEL_STYLE))
         CB_STYLE = f"""
             QCheckBox {{
@@ -283,64 +395,17 @@ class SessionsWidget(QWidget):
         opts_row.addStretch()
         lf_main.addLayout(opts_row)
 
-        lf_main.addWidget(QLabel("WINDOW SIZE", styleSheet=LABEL_STYLE))
-        SPIN_STYLE = f"""
-            QSpinBox {{
-                background-color: {DarkPalette.BACKGROUND};
-                color: {DarkPalette.TEXT};
-                border: 1px solid transparent;
-                border-radius: 6px;
-                padding: 8px 32px 8px 12px;
-                font-size: 13px;
-            }}
-            QSpinBox:hover {{ 
-                border-color: rgba(124, 58, 237, 0.3);
-                background-color: rgba(124, 58, 237, 0.03);
-            }}
-            QSpinBox:focus {{ border-color: {DarkPalette.ACCENT}; }}
-            QSpinBox::up-button, QSpinBox::down-button {{
-                width: 24px; background-color: transparent; border: none;
-            }}
-            QSpinBox::up-arrow {{
-                image: none;
-                border-left: 3px solid transparent;
-                border-right: 3px solid transparent;
-                border-bottom: 4px solid {DarkPalette.TEXT_DIM};
-            }}
-            QSpinBox::down-arrow {{
-                image: none;
-                border-left: 3px solid transparent;
-                border-right: 3px solid transparent;
-                border-top: 4px solid {DarkPalette.TEXT_DIM};
-            }}
-        """
-        win_row = QHBoxLayout()
-        win_row.setSpacing(8)
-        self.window_width_spin = QSpinBox()
-        self.window_width_spin.setRange(400, 3840)
-        self.window_width_spin.setValue(500)
-        self.window_width_spin.setSuffix(" px")
-        self.window_width_spin.setFixedHeight(INPUT_H)
-        self.window_width_spin.setStyleSheet(SPIN_STYLE)
-        win_row.addWidget(self.window_width_spin)
-        sep = QLabel("×")
-        sep.setStyleSheet(f"color: {DarkPalette.TEXT_DIM}; font-size: 15px;")
-        sep.setFixedWidth(18)
-        sep.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        win_row.addWidget(sep)
-        self.window_height_spin = QSpinBox()
-        self.window_height_spin.setRange(300, 2160)
-        self.window_height_spin.setValue(600)
-        self.window_height_spin.setSuffix(" px")
-        self.window_height_spin.setFixedHeight(INPUT_H)
-        self.window_height_spin.setStyleSheet(SPIN_STYLE)
-        win_row.addWidget(self.window_height_spin)
-        lf_main.addLayout(win_row)
+        lf_main.addWidget(QLabel("VIEWPORT", styleSheet=LABEL_STYLE))
+        viewport_info = QLabel("From profile screen resolution")
+        viewport_info.setStyleSheet(
+            f"color: {DarkPalette.TEXT_DIM}; font-size: 12px; padding: 6px 0px;"
+        )
+        lf_main.addWidget(viewport_info)
 
         lf_main.addWidget(QLabel("TARGET URL", styleSheet=LABEL_STYLE))
         self.url_input = QLineEdit()
         self.url_input.setPlaceholderText("https://...")
-        self.url_input.setText("https://fv.pro")
+        self.url_input.setText("https://httpbin.org/headers")
         self.url_input.setFixedHeight(INPUT_H)
         self.url_input.setStyleSheet(f"""
             QLineEdit {{
@@ -378,7 +443,7 @@ class SessionsWidget(QWidget):
             }}
         """
         for label, qurl in [
-            ("fv.pro", "https://fv.pro"),
+            ("browserleaks", "https://browserleaks.com"),
             ("browserscan", "https://www.browserscan.net/bot-detection"),
             ("pixelscan", "https://pixelscan.net"),
             ("fp.com", "https://fingerprint.com/demo"),
@@ -584,6 +649,11 @@ class SessionsWidget(QWidget):
 
     # ── helpers ──────────────────────────────────────────────────────────────
 
+    def _reload_all(self):
+        """Reload both profiles and proxies"""
+        self._reload_profiles()
+        self._reload_proxies()
+
     def _reload_profiles(self):
         self.profile_combo.clear()
         try:
@@ -593,6 +663,83 @@ class SessionsWidget(QWidget):
                 self.profile_combo.addItem(name)
         except Exception as e:
             print(f"[SessionsPage] Error loading profiles: {e}")
+
+    def _reload_proxies(self):
+        """Load proxy list from ProxyManager"""
+        self.proxy_combo.clear()
+        self.proxy_combo.addItem("None")  # No proxy option
+        try:
+            pm = ProxyManager()
+            proxy_names = pm.list()
+            for name in sorted(proxy_names):
+                proxy_data = pm.load(name)
+                if proxy_data:
+                    status = proxy_data.get('status', 'unknown')
+                    status_icon = "✓" if status == "active" else "✗" if status == "failed" else "?"
+                    display_name = f"{status_icon} {name} ({proxy_data['host']}:{proxy_data['port']})"
+                    self.proxy_combo.addItem(display_name, name)  # Store name as user data
+        except Exception as e:
+            print(f"[SessionsPage] Error loading proxies: {e}")
+
+    def _test_proxy(self):
+        """Test the selected proxy connection"""
+        proxy_idx = self.proxy_combo.currentIndex()
+        if proxy_idx == 0:  # "None" selected
+            QMessageBox.information(self, "Test Proxy", "No proxy selected.")
+            return
+        
+        proxy_name = self.proxy_combo.itemData(proxy_idx)
+        if not proxy_name:
+            proxy_text = self.proxy_combo.currentText()
+            if proxy_text != "None":
+                proxy_name = proxy_text.split(" ")[1]  # Extract name from "✓ name (host:port)"
+        
+        if not proxy_name:
+            QMessageBox.warning(self, "Test Proxy", "Could not determine proxy name.")
+            return
+        
+        try:
+            from tegufox_core.proxy_manager import ProxyManager
+            pm = ProxyManager()
+            
+            # Show testing message
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Testing Proxy")
+            msg.setText(f"Testing proxy: {proxy_name}\n\nPlease wait...")
+            msg.setStandardButtons(QMessageBox.StandardButton.NoButton)
+            msg.show()
+            msg.repaint()
+            
+            # Test proxy
+            result = pm.test_proxy(proxy_name, timeout=10)
+            msg.close()
+            
+            if result["success"]:
+                QMessageBox.information(
+                    self,
+                    "Proxy Test Success",
+                    f"✓ Proxy is working!\n\n"
+                    f"Proxy: {proxy_name}\n"
+                    f"External IP: {result['ip']}\n"
+                    f"Response Time: {result.get('response_time', 'N/A')}s"
+                )
+                # Reload proxies to update status
+                self._reload_proxies()
+            else:
+                QMessageBox.warning(
+                    self,
+                    "Proxy Test Failed",
+                    f"✗ Proxy connection failed!\n\n"
+                    f"Proxy: {proxy_name}\n"
+                    f"Error: {result.get('error', 'Unknown error')}\n\n"
+                    f"The proxy may be down or credentials may be incorrect."
+                )
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Test Error",
+                f"Failed to test proxy:\n{str(e)}"
+            )
 
     @staticmethod
     def _ff_version():
@@ -629,6 +776,17 @@ class SessionsWidget(QWidget):
         if not profile:
             QMessageBox.warning(self, "Launch", "No profile selected.")
             return
+        
+        # Get selected proxy (use userData if available, otherwise text)
+        proxy_idx = self.proxy_combo.currentIndex()
+        proxy = None
+        if proxy_idx > 0:  # Skip "None" option
+            proxy = self.proxy_combo.itemData(proxy_idx)
+            if not proxy:  # Fallback to parsing text
+                proxy_text = self.proxy_combo.currentText()
+                if proxy_text != "None":
+                    proxy = proxy_text.split(" (")[0]  # Extract name from "name (host:port)"
+        
         headless = self.headless_cb.isChecked()
         url = self.url_input.text().strip() or None
         sid = str(uuid.uuid4())[:8]
@@ -687,10 +845,10 @@ class SessionsWidget(QWidget):
                 _CUSTOM_BIN = os.environ.get("TEGUFOX_BINARY")
         
         browser_bin = _CUSTOM_BIN if self.custom_build_cb.isChecked() else None
-        worker = SessionWorker(sid, profile, headless, browser_binary=browser_bin)
+        worker = SessionWorker(sid, profile, headless, browser_binary=browser_bin, proxy=proxy)
         worker.status_changed.connect(self._on_status_changed)
         _gui_sessions[sid] = worker
-        self._add_session_row(sid, profile)
+        self._add_session_row(sid, profile, proxy)
         worker.start()
         if url:
             nav_url = url
@@ -707,7 +865,7 @@ class SessionsWidget(QWidget):
 
             threading.Thread(target=_nav, daemon=True).start()
 
-    def _add_session_row(self, sid: str, profile: str):
+    def _add_session_row(self, sid: str, profile: str, proxy: str = None):
         self._empty_container.setVisible(False)
         self._session_count_lbl.setText(str(len(_gui_sessions)))
         row = QFrame()
@@ -750,7 +908,11 @@ class SessionsWidget(QWidget):
         )
         info_col.addWidget(id_lbl)
         
-        prof_lbl = QLabel(profile)
+        # Profile + Proxy info
+        info_text = profile
+        if proxy:
+            info_text += f" • 🔒 {proxy}"
+        prof_lbl = QLabel(info_text)
         prof_lbl.setStyleSheet(f"color: {DarkPalette.TEXT_DIM}; font-size: 12px; font-weight: 500; border: none;")
         info_col.addWidget(prof_lbl)
         

@@ -45,6 +45,11 @@ class ProxyPool(Base):
     last_ip = Column(String(50))
     created = Column(DateTime, default=datetime.utcnow)
     notes = Column(Text)
+    # Manual geo override — supersedes ip-api lookup for timezone spoofing.
+    # Necessary because IP geo DBs disagree (e.g. HostPapa/LT IPs report as USA
+    # in ip-api.com but Lithuania in detection sites). User sets what proxy
+    # provider claimed the location is.
+    timezone = Column(String(64))  # IANA name, e.g. "Europe/Vilnius"
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dict"""
@@ -60,6 +65,7 @@ class ProxyPool(Base):
             "last_ip": self.last_ip,
             "created": self.created.strftime("%Y-%m-%d %H:%M:%S") if self.created else None,
             "notes": self.notes,
+            "timezone": self.timezone,
         }
 
 
@@ -157,7 +163,23 @@ class ProxyManager:
         self.db_path = db_path
         self.engine = create_engine(f"sqlite:///{db_path}", echo=False)
         Base.metadata.create_all(self.engine)
+        self._migrate_schema()
         self.SessionLocal = sessionmaker(bind=self.engine)
+
+    def _migrate_schema(self) -> None:
+        """Add newly-introduced columns to existing DBs.
+
+        SQLAlchemy's create_all() only creates missing TABLES, not missing
+        COLUMNS — so pre-existing proxies.db files won't get the timezone
+        column without this.
+        """
+        with self.engine.begin() as conn:
+            from sqlalchemy import text
+            existing_cols = {
+                row[1] for row in conn.execute(text("PRAGMA table_info(proxy_pool)"))
+            }
+            if "timezone" not in existing_cols:
+                conn.execute(text("ALTER TABLE proxy_pool ADD COLUMN timezone VARCHAR(64)"))
 
     def get_session(self) -> Session:
         """Get database session"""
@@ -172,6 +194,7 @@ class ProxyManager:
         password: Optional[str] = None,
         protocol: str = "http",
         notes: Optional[str] = None,
+        timezone: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Create new proxy
@@ -206,6 +229,7 @@ class ProxyManager:
                 password=password,
                 protocol=protocol,
                 notes=notes,
+                timezone=timezone,
             )
             session.add(proxy)
             session.commit()
@@ -286,7 +310,7 @@ class ProxyManager:
                 raise ValueError(f"Proxy '{name}' not found")
             
             # Update allowed fields
-            allowed_fields = ["host", "port", "username", "password", "protocol", "notes", "status"]
+            allowed_fields = ["host", "port", "username", "password", "protocol", "notes", "status", "timezone"]
             for key, value in kwargs.items():
                 if key in allowed_fields:
                     setattr(proxy, key, value)

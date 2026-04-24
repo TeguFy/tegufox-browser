@@ -1,0 +1,80 @@
+diff --git a/intl/components/src/TimeZone.cpp b/intl/components/src/TimeZone.cpp
+index 472492899a..deb990a35a 100644
+--- a/intl/components/src/TimeZone.cpp
++++ b/intl/components/src/TimeZone.cpp
+@@ -7,6 +7,11 @@
+ #include "mozilla/Vector.h"
+ 
+ #include <algorithm>
++#include <cstdlib>
++#include <cstring>
++#include <fstream>
++#include <sstream>
++#include <string>
+ #include <string_view>
+ 
+ #include "unicode/uenum.h"
+@@ -14,6 +19,48 @@
+ #  include "unicode/basictz.h"
+ #endif
+ 
++// ── TEGUFOX: spoofed timezone resolver.
++// Priority: runtime.json timezone > CAMOUFOX_TZ_OVERRIDE env > OS default.
++static std::string TegufoxReadRuntimeTimezone() {
++  const char* override_path = std::getenv("TEGUFOX_RUNTIME_CONFIG");
++  std::string path;
++  if (override_path && *override_path) {
++    path = override_path;
++  } else {
++    const char* home = std::getenv("HOME");
++    if (!home || !*home) return std::string();
++    path = std::string(home) + "/.tegufox/runtime.json";
++  }
++  std::ifstream f(path.c_str());
++  if (!f.is_open()) return std::string();
++  std::stringstream buf;
++  buf << f.rdbuf();
++  std::string content = buf.str();
++  const char* key = "\"timezone\"";
++  size_t pos = content.find(key);
++  if (pos == std::string::npos) return std::string();
++  pos = content.find(':', pos + std::strlen(key));
++  if (pos == std::string::npos) return std::string();
++  pos = content.find('"', pos);
++  if (pos == std::string::npos) return std::string();
++  size_t end = content.find('"', pos + 1);
++  if (end == std::string::npos) return std::string();
++  return content.substr(pos + 1, end - pos - 1);
++}
++static const std::string& TegufoxGetSpoofedTimezone() {
++  static std::string cached;
++  static bool loaded = false;
++  if (!loaded) {
++    loaded = true;
++    cached = TegufoxReadRuntimeTimezone();
++    if (cached.empty()) {
++      const char* env = std::getenv("CAMOUFOX_TZ_OVERRIDE");
++      if (env && *env) cached = env;
++    }
++  }
++  return cached;
++}
++
+ namespace mozilla::intl {
+ 
+ 
+@@ -22,7 +69,13 @@ Result<UniquePtr<TimeZone>, ICUError> TimeZone::TryCreate(
+     Maybe<Span<const char>> aTimeZoneOverride) {
+   const char* zoneID = nullptr;
+   int32_t zoneIDLen = 0;
+-  if (aTimeZoneOverride) {
++
++  // TEGUFOX: override any zoneID (explicit or null) with spoofed timezone.
++  const std::string& spoofed = TegufoxGetSpoofedTimezone();
++  if (!spoofed.empty()) {
++    zoneID = spoofed.c_str();
++    zoneIDLen = static_cast<int32_t>(spoofed.size());
++  } else if (aTimeZoneOverride) {
+     zoneIDLen = static_cast<int32_t>(aTimeZoneOverride->Length());
+     zoneID = aTimeZoneOverride->Elements();
+   }

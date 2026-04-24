@@ -104,9 +104,20 @@ class SessionConfig:
 
     # Browser settings
     headless: bool = False
-    viewport_width: Optional[int] = 600  # Default window width
-    viewport_height: Optional[int] = 800  # Default window height
+    viewport_width: Optional[int] = None  # Explicit override; None = derive from profile screen
+    viewport_height: Optional[int] = None  # Explicit override; None = derive from profile screen
     user_agent: Optional[str] = None
+
+    # Proxy settings
+    proxy: Optional[Dict[str, str]] = None  # {"server": "http://host:port", "username": "...", "password": "..."}
+
+    # Explicit timezone override (IANA name, e.g. "America/New_York").
+    # If None and proxy is set, resolved from proxy IP via ip-api.com.
+    timezone: Optional[str] = None
+
+    # Override path for runtime.json (consumed by C++ patches).
+    # Default: $TEGUFOX_RUNTIME_CONFIG env var > ~/.tegufox/runtime.json
+    runtime_config_path: Optional[str] = None
 
     # Anti-detection settings
     enable_dns_leak_prevention: bool = True
@@ -293,7 +304,79 @@ class TegufoxSession:
                     break
         if _custom_bin:
             launch_opts['executable_path'] = _custom_bin
-        self._camoufox = Camoufox(headless=self.config.headless, i_know_what_im_doing=True, **launch_opts)
+
+        # Extract proxy from launch_opts - Camoufox expects it as a separate parameter
+        # (it gets passed to launch_options() function, not in the options dict)
+        proxy_config = launch_opts.pop('proxy', None)
+
+        # Resolve + write runtime.json consumed by C++ patches (DNS + timezone).
+        # Sets TZ, CAMOUFOX_TZ_OVERRIDE, TEGUFOX_RUNTIME_CONFIG env vars.
+        # Raises RuntimeError if proxy timezone cannot be resolved (STRICT policy).
+        from tegufox_core.runtime_config import prepare_runtime
+        runtime_env = prepare_runtime(
+            proxy_config=proxy_config,
+            timezone=self.config.timezone,
+            config_path=self.config.runtime_config_path,
+        )
+        camoufox_env = dict(_os.environ)
+        camoufox_env.update(runtime_env)
+
+
+        # Launch with proxy as separate parameter if configured
+        if proxy_config:
+            # IMPORTANT: Resolve proxy hostname to IP address before passing to Camoufox/Firefox
+            # If the profile uses DoH strict mode (network.trr.mode=3), Firefox cannot resolve the
+            # proxy hostname because it needs the proxy to reach the DoH server -> dead end.
+            # By passing the raw IP, we bypass this chicken-and-egg problem entirely.
+            if 'server' in proxy_config:
+                from urllib.parse import urlparse
+                import socket
+                try:
+                    parsed = urlparse(proxy_config['server'])
+                    if parsed.hostname and not parsed.hostname.replace('.', '').isnumeric():
+                        # Resolve hostname to IP to prevent NS_ERROR_UNKNOWN_PROXY_HOST
+                        # We use getaddrinfo to support both IPv4 and IPv6
+                        addr_info = socket.getaddrinfo(parsed.hostname, parsed.port)
+                        ip = addr_info[0][4][0]
+                        
+                        # Wrap IPv6 in brackets
+                        if ":" in ip:
+                            ip = f"[{ip}]"
+                            
+                        logger.debug(f"Resolved proxy hostname {parsed.hostname} -> {ip}")
+                        
+                        # Rebuild server string with IP
+                        port_str = f":{parsed.port}" if parsed.port else ""
+                        proxy_config['server'] = f"{parsed.scheme}://{ip}{port_str}"
+                except Exception as e:
+                    logger.warning(f"Failed to resolve proxy hostname: {e}. NS_ERROR_UNKNOWN_PROXY_HOST may occur.")
+
+            logger.info(f"Launching Camoufox with proxy: {proxy_config.get('server', 'unknown')}")
+            logger.debug(f"Full proxy config: {proxy_config}")
+            
+            # Add bypass for localhost to avoid proxy DNS issues
+            if 'bypass' not in proxy_config:
+                proxy_config['bypass'] = 'localhost,127.0.0.1'
+                logger.debug(f"Added proxy bypass: {proxy_config['bypass']}")
+            
+            # Disable geoip to avoid proxy validation issues
+            # Camoufox tries to fetch public IP through proxy if geoip=True
+            self._camoufox = Camoufox(
+                headless=self.config.headless,
+                i_know_what_im_doing=True,
+                geoip=False,  # Disable geoip to avoid proxy validation
+                proxy=proxy_config,
+                env=camoufox_env,
+                **launch_opts,
+            )
+        else:
+            self._camoufox = Camoufox(
+                headless=self.config.headless,
+                i_know_what_im_doing=True,
+                env=camoufox_env,
+                **launch_opts,
+            )
+        
         self.browser = self._camoufox.__enter__()
         
         # Add browser lifecycle event listeners for debugging
@@ -304,6 +387,7 @@ class TegufoxSession:
 
         # Create context with Playwright-level options (viewport, UA)
         context_options = self._build_context_options()
+        logger.info(f"Creating context with options: {list(context_options.keys())}")
         self.context = self.browser.new_context(**context_options)
         
         # Add context lifecycle event listeners
@@ -752,6 +836,12 @@ class TegufoxSession:
         if not firefox_prefs:
             logger.warning("No Firefox preferences found in profile")
             return
+            
+        # If proxy is used, DO NOT apply profile's DoH settings because DoH causes DNS leaks with proxy
+        if self.config.proxy:
+            logger.info("Proxy is configured, overriding profile DoH settings to prevent DNS leaks")
+            firefox_prefs['network.trr.mode'] = 5
+            return
 
         logger.info(
             f"DNS configured: {dns_config.get('provider', 'unknown')} (DoH mode {firefox_prefs.get('network.trr.mode', 0)})"
@@ -925,24 +1015,123 @@ class TegufoxSession:
         _rtc_prefs['media.peerconnection.ice.obfuscate_host_addresses'] = False
         # Disable navigator.webdriver flag — Firefox sets this to true when automated
         _rtc_prefs['dom.webdriver.enabled'] = False
+        
+        # ── Proxy configuration ─────
+        # NOTE: Proxy is extracted and passed separately to Camoufox() in _start_tegufox()
+        # because Camoufox's launch_options() expects proxy as a named parameter, not in the dict
+        if self.config.proxy:
+            opts['proxy'] = self.config.proxy
+            logger.debug(f"Proxy will be configured: {self.config.proxy.get('server', 'unknown')}")
+            
+            # PREVENT DNS LEAKS OVER PROXY:
+            # If DoH (network.trr.mode) is active, DNS queries go to Cloudflare (causing leak detection)
+            # because the proxy is used to connect to Cloudflare, but the target server sees Cloudflare's IP.
+            # We force TRR mode = 5 (Explicitly disable DoH) and socks_remote_dns = True
+            # so that ALL DNS queries are resolved by the proxy server itself.
+            
+            _rtc_prefs['network.proxy.socks_remote_dns'] = True
+            _rtc_prefs['network.proxy.proxy_over_tls'] = True
+            _rtc_prefs['network.dns.disablePrefetch'] = True
+            _rtc_prefs['network.dns.disableIPv6'] = True
+            _rtc_prefs['network.dns.blockDotOnion'] = True
+            _rtc_prefs['network.dns.echoAPI'] = False
+            _rtc_prefs['network.trr.mode'] = 5
+            
+            # If HTTP proxy, force DNS resolution on proxy side too
+            if 'http' in str(self.config.proxy.get('server', '')).lower():
+                _rtc_prefs['network.proxy.type'] = 1 # Manual proxy config
+                # Usually playwright handles proxy type automatically, but let's be sure
+                # that Firefox knows to proxy DNS when resolving.
+
         opts['firefox_user_prefs'] = _rtc_prefs
 
         return opts
 
     def _build_context_options(self) -> Dict[str, Any]:
-        """Build Playwright context options (viewport, UA — applied per context)"""
+        """Build Playwright context options (viewport, UA, timezone — applied per context)"""
         options: Dict[str, Any] = {}
 
-        # Viewport - always use 600x800 as default startup size
-        # This can be overridden by explicit config values
-        viewport_width = self.config.viewport_width or 600
-        viewport_height = self.config.viewport_height or 800
-        
+        # Viewport: explicit config override > profile screen > default 1280×800
+        if self.config.viewport_width and self.config.viewport_height:
+            viewport_width = self.config.viewport_width
+            viewport_height = self.config.viewport_height
+        else:
+            scr = self.profile.get("screen", {})
+            old_cfg = self.profile.get("config", {})
+            viewport_width = (
+                scr.get("width")
+                or old_cfg.get("screen.width")
+                or 1280
+            )
+            viewport_height = (
+                scr.get("height")
+                or old_cfg.get("screen.height")
+                or 800
+            )
+
         options["viewport"] = {
-            "width": viewport_width,
-            "height": viewport_height,
+            "width": int(viewport_width),
+            "height": int(viewport_height),
         }
-        logger.debug(f"Viewport set to {viewport_width}x{viewport_height}")
+        logger.debug(f"Viewport set to {viewport_width}x{viewport_height} (source: {'config override' if self.config.viewport_width else 'profile screen'})")
+
+        # Resolve proxy IP + timezone/geo for Playwright context overrides.
+        # Priority: manual override (SessionConfig.timezone) > ip-api lookup.
+        # Manual override is authoritative because ip-api DB can disagree with
+        # detection-site DBs (e.g. HostPapa IPs: ip-api says USA, detection
+        # sites say Lithuania).
+        if self.config.proxy:
+            import httpx
+            from urllib.parse import urlparse
+
+            proxy = self.config.proxy
+            parsed = urlparse(proxy.get("server", ""))
+            user = proxy.get("username", "")
+            pwd = proxy.get("password", "")
+            if user and pwd:
+                proxy_url = f"{parsed.scheme}://{user}:{pwd}@{parsed.hostname}:{parsed.port}"
+            else:
+                proxy_url = proxy.get("server", "")
+
+            manual_tz = self.config.timezone
+            api_data = {}
+            try:
+                with httpx.Client(proxy=proxy_url, timeout=5.0) as client:
+                    resp = client.get("http://ip-api.com/json?fields=query,timezone,lat,lon,offset")
+                    api_data = resp.json()
+            except Exception as e:
+                logger.warning(f"ip-api lookup failed in context build: {e}")
+
+            # Timezone — manual override wins over ip-api.
+            tz = manual_tz or api_data.get("timezone")
+            if tz:
+                options["timezone_id"] = tz
+                self.profile['timezone'] = tz
+                if manual_tz:
+                    logger.info(f"Context timezone set from manual override: {tz}")
+                else:
+                    logger.info(f"Context timezone set from ip-api: {tz}")
+                if api_data.get("offset") is not None and not manual_tz:
+                    self.profile['timezoneOffset'] = api_data["offset"] // 60
+
+            # Geolocation — use ip-api (not authoritative but best available
+            # without a manual per-proxy lat/lon field).
+            if api_data.get("lat") is not None and api_data.get("lon") is not None:
+                options["geolocation"] = {"latitude": api_data["lat"], "longitude": api_data["lon"]}
+                options.setdefault("permissions", [])
+                if "geolocation" not in options["permissions"]:
+                    options["permissions"].append("geolocation")
+
+            if api_data.get("query"):
+                self.profile.setdefault('firefox_preferences', {})
+                self.profile['webrtc_ip'] = api_data["query"]
+
+        # If no proxy or failed to resolve, use profile timezone
+        if "timezone_id" not in options and "timezone" in self.profile and self.profile["timezone"]:
+            options["timezone_id"] = self.profile["timezone"]
+
+        # NOTE: Proxy is configured at browser launch level (see _build_launch_options)
+        # Firefox requires proxy to be set when launching the browser, not at context level
 
         # User agent
         if self.config.user_agent:
@@ -1002,8 +1191,24 @@ class TegufoxSession:
                 'unmaskedRenderer': wgl.get('renderer', wgl.get('unmaskedRenderer', '')),
             },
         }
+
+        # Include Timezone, Fonts, and Voices so Camoufox C++ patches can use them and self-destruct
+        if self.profile.get('timezone'):
+            preset['timezone'] = self.profile['timezone']
+        
+        font_list = self.profile.get('fonts', self.profile.get('fontList', []))
+        if font_list:
+            preset['fonts'] = font_list
+            
+        speech_voices = self.profile.get('speechVoices', [])
+        if speech_voices:
+            preset['speechVoices'] = speech_voices
+
         try:
-            ctx_fp = generate_context_fingerprint(preset=preset, os=os_str)
+            # We must pass webrtc_ip to ensure C++ layer hides the native function
+            webrtc_ip = self.profile.get('webrtc_ip')
+            ctx_fp = generate_context_fingerprint(preset=preset, os=os_str, webrtc_ip=webrtc_ip)
+                
             if ctx_fp.get('init_script'):
                 self.context.add_init_script(ctx_fp['init_script'])
         except Exception as exc:
@@ -1159,27 +1364,10 @@ class TegufoxSession:
         ]
 
         # 1. Timezone
-        if timezone and tz_offset is not None:
-            p += [
-                f'  var _fpTZ={_j.dumps(timezone)};',
-                f'  var _fpTZOff={int(tz_offset)};',
-                '  try {',
-                '    var _ODTF=Intl.DateTimeFormat;',
-                '    function _PDTF(loc,opts){',
-                '      var o=Object.assign({},opts||{});',
-                '      if(!o.timeZone)o.timeZone=_fpTZ;',
-                '      return new _ODTF(loc,o);',
-                '    }',
-                '    var _oRO=_ODTF.prototype.resolvedOptions;',
-                '    _PDTF.prototype=_ODTF.prototype;',
-                '    Object.defineProperties(_PDTF,Object.getOwnPropertyDescriptors(_ODTF));',
-                '    _PDTF.prototype.resolvedOptions=function(){',
-                '      return Object.assign({},_oRO.call(this),{timeZone:_fpTZ});',
-                '    };',
-                '    Intl.DateTimeFormat=_PDTF;',
-                '  } catch(e){}',
-                '  try{Date.prototype.getTimezoneOffset=function(){return -_fpTZOff;};}catch(e){}',
-            ]
+        # Playwright's timezone_id natively handles timezone and offset.
+        # We NO LONGER inject JS overrides for Intl or getTimezoneOffset because:
+        # 1) Playwright handles it at the browser level natively.
+        # 2) JS overrides break toString() checks and get flagged as "altered your local timezone".
 
         # 2. UserAgentData.getHighEntropyValues (Chrome only)
         # Must create a proper NavigatorUAData class so that:
@@ -1321,6 +1509,14 @@ class TegufoxSession:
             '    if(typeof tag===\'string\'&&tag.toLowerCase()===\'iframe\')e.addEventListener(\'load\',function(){if(e.contentWindow)_fpPI(e.contentWindow);});',
             '    return e;};',
         ]
+        
+        # Camoufox's generate_context_fingerprint misses setWebRTCIPv6 which leaves it leaked on window.
+        # We must call it to trigger self-destruct in the C++ layer.
+        webrtc_ip = profile.get('webrtc_ip', '')
+        if webrtc_ip and ':' in webrtc_ip:
+            p.append(f'  if (typeof window.setWebRTCIPv6 === "function") window.setWebRTCIPv6({_j.dumps(webrtc_ip)});')
+        else:
+            p.append('  if (typeof window.setWebRTCIPv6 === "function") window.setWebRTCIPv6("");')
 
         p.append('})()')
         return '\n'.join(p)

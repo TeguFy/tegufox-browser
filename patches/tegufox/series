@@ -1,10 +1,3 @@
-# Tegufox patch application order
-# Each line is a patch filename relative to this directory
-# Applied ON TOP of Camoufox patches (after `make dir` in camoufox-source/)
-#
-# Patches are applied in the order listed here.
-# All patches are generated against the camoufox-patched state.
-
 01-canvas-v2.patch
 02-webgl-enhanced.patch
 03-audio-context-v2.patch
@@ -14,3 +7,6 @@
 07-http2-settings.patch
 08-navigator-v2.patch
 09-branding.patch
+10-webrtc-block-host-ice.patch
+11-dns-force-doh.patch
+12-timezone-native-spoof.patch

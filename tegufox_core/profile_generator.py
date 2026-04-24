@@ -1,3 +1,25 @@
+import urllib.request
+import json
+def get_timezone_from_proxy(proxy_config: dict) -> Tuple[str, int]:
+    """Get timezone and offset from proxy IP using ip-api.com."""
+    proxy_url = proxy_config.get("server", "")
+    if not proxy_url:
+        return None, None
+    handler = urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url})
+    opener = urllib.request.build_opener(handler)
+    try:
+        with opener.open("http://ip-api.com/json?fields=query,timezone", timeout=10) as resp:
+            data = json.load(resp)
+            tz = data.get("timezone")
+            # Find offset from TIMEZONES
+            for region_tzs in TIMEZONES.values():
+                for tz_name, tz_offset in region_tzs:
+                    if tz_name == tz:
+                        return tz, tz_offset
+            # fallback: offset unknown
+            return tz, None
+    except Exception:
+        return None, None
 """
 Profile Generator for Tegufox Browser
 Generates browser profiles with randomized fingerprints for anti-detection.
@@ -354,18 +376,22 @@ def generate_profile(config: Dict) -> Dict:
     else:
         screen = _get_random_screen_resolution(config['os'])
     
-    # Timezone
-    if config.get('timezone'):
-        # Find timezone offset (simplified - would need proper timezone library)
-        timezone = config['timezone']
-        timezone_offset = -300  # Default EST
-        for region_tzs in TIMEZONES.values():
-            for tz_name, tz_offset in region_tzs:
-                if tz_name == timezone:
-                    timezone_offset = tz_offset
-                    break
-    else:
-        timezone, timezone_offset = _get_random_timezone()
+    # Timezone: auto-detect from proxy if proxy exists
+    timezone = None
+    timezone_offset = None
+    if config.get('proxy'):
+        timezone, timezone_offset = get_timezone_from_proxy(config['proxy'])
+    if not timezone:
+        if config.get('timezone'):
+            timezone = config['timezone']
+            timezone_offset = None
+            for region_tzs in TIMEZONES.values():
+                for tz_name, tz_offset in region_tzs:
+                    if tz_name == timezone:
+                        timezone_offset = tz_offset
+                        break
+        else:
+            timezone, timezone_offset = _get_random_timezone()
     
     # WebGL
     resolved_webgl = _resolve_webgl_selection(config.get('webgl'), config['browser'], config['os'], screen['width'])

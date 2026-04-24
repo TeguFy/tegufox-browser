@@ -1,0 +1,148 @@
+diff --git a/netwerk/dns/TRRService.cpp b/netwerk/dns/TRRService.cpp
+index 0405c22d59..5992a4ec96 100644
+--- a/netwerk/dns/TRRService.cpp
++++ b/netwerk/dns/TRRService.cpp
+@@ -27,9 +27,49 @@
+ #include "mozilla/glean/NetwerkMetrics.h"
+ #include "mozilla/net/NeckoParent.h"
+ #include "mozilla/net/TRRServiceChild.h"
++
++#include <cstdlib>
++#include <fstream>
++#include <sstream>
++#include <string>
+ // Put DNSLogging.h at the end to avoid LOG being overwritten by other headers.
+ #include "DNSLogging.h"
+ 
++// ── TEGUFOX: Runtime config reader (flat JSON, cached once per process).
++// Reads ~/.tegufox/runtime.json (or $TEGUFOX_RUNTIME_CONFIG).
++static std::string TegufoxReadRuntimeField(const char* key) {
++  const char* override_path = std::getenv("TEGUFOX_RUNTIME_CONFIG");
++  std::string path;
++  if (override_path && *override_path) {
++    path = override_path;
++  } else {
++    const char* home = std::getenv("HOME");
++    if (!home || !*home) return std::string();
++    path = std::string(home) + "/.tegufox/runtime.json";
++  }
++  std::ifstream f(path.c_str());
++  if (!f.is_open()) return std::string();
++  std::stringstream buf;
++  buf << f.rdbuf();
++  std::string content = buf.str();
++  std::string needle = std::string("\"") + key + "\"";
++  size_t pos = content.find(needle);
++  if (pos == std::string::npos) return std::string();
++  pos = content.find(':', pos + needle.size());
++  if (pos == std::string::npos) return std::string();
++  pos = content.find('"', pos);
++  if (pos == std::string::npos) return std::string();
++  size_t end = content.find('"', pos + 1);
++  if (end == std::string::npos) return std::string();
++  return content.substr(pos + 1, end - pos - 1);
++}
++static const std::string& TegufoxGetDnsStrategy() {
++  static std::string cached;
++  static bool loaded = false;
++  if (!loaded) { loaded = true; cached = TegufoxReadRuntimeField("dns_strategy"); }
++  return cached;
++}
++
+ static const char kOpenCaptivePortalLoginEvent[] = "captive-portal-login";
+ static const char kClearPrivateData[] = "clear-private-data";
+ static const char kPurge[] = "browser:purge-session-history";
+@@ -246,6 +286,16 @@ void TRRService::SetDetectedTrrURI(const nsACString& aURI) {
+ }
+ 
+ bool TRRService::Enabled(nsIRequest::TRRMode aRequestMode) {
++  // TEGUFOX: strategy-aware DNS behavior.
++  //   proxy_socks_dns → disable TRR, let SOCKS5 handle DNS (no leak via proxy)
++  //   doh_only        → force TRR always (no fallback to OS DNS)
++  //   other/empty     → use Firefox default
++  {
++    const std::string& strategy = TegufoxGetDnsStrategy();
++    if (strategy == "proxy_socks_dns") return false;
++    if (strategy == "doh_only") return true;
++  }
++
+   if (mMode == nsIDNSService::MODE_TRROFF ||
+       aRequestMode == nsIRequest::TRR_DISABLED_MODE) {
+     LOG(("TRR service not enabled - off or disabled"));
+diff --git a/netwerk/dns/TRRServiceBase.cpp b/netwerk/dns/TRRServiceBase.cpp
+index 9437d78f6e..b738a902da 100644
+--- a/netwerk/dns/TRRServiceBase.cpp
++++ b/netwerk/dns/TRRServiceBase.cpp
+@@ -6,6 +6,11 @@
+ 
+ #include "TRRServiceBase.h"
+ 
++#include <cstdlib>
++#include <fstream>
++#include <sstream>
++#include <string>
++
+ #include "TRRService.h"
+ #include "mozilla/Preferences.h"
+ #include "nsHostResolver.h"
+@@ -25,6 +30,40 @@
+ #  include <shlobj.h>  // for SHGetSpecialFolderPathA
+ #endif                 // XP_WIN
+ 
++// ── TEGUFOX: runtime config reader (duplicate of helper in TRRService.cpp) ──
++static std::string TegufoxBaseReadRuntimeField(const char* key) {
++  const char* override_path = std::getenv("TEGUFOX_RUNTIME_CONFIG");
++  std::string path;
++  if (override_path && *override_path) {
++    path = override_path;
++  } else {
++    const char* home = std::getenv("HOME");
++    if (!home || !*home) return std::string();
++    path = std::string(home) + "/.tegufox/runtime.json";
++  }
++  std::ifstream f(path.c_str());
++  if (!f.is_open()) return std::string();
++  std::stringstream buf;
++  buf << f.rdbuf();
++  std::string content = buf.str();
++  std::string needle = std::string("\"") + key + "\"";
++  size_t pos = content.find(needle);
++  if (pos == std::string::npos) return std::string();
++  pos = content.find(':', pos + needle.size());
++  if (pos == std::string::npos) return std::string();
++  pos = content.find('"', pos);
++  if (pos == std::string::npos) return std::string();
++  size_t end = content.find('"', pos + 1);
++  if (end == std::string::npos) return std::string();
++  return content.substr(pos + 1, end - pos - 1);
++}
++static const std::string& TegufoxBaseGetDnsStrategy() {
++  static std::string cached;
++  static bool loaded = false;
++  if (!loaded) { loaded = true; cached = TegufoxBaseReadRuntimeField("dns_strategy"); }
++  return cached;
++}
++
+ namespace mozilla {
+ namespace net {
+ 
+@@ -151,6 +190,19 @@ void TRRServiceBase::OnTRRModeChange() {
+   // This is the value of the pref "network.trr.mode"
+   nsIDNSService::ResolverMode trrModePrefValue;
+   mMode = ModeFromPrefs(trrModePrefValue);
++
++  // TEGUFOX: strategy-aware mode override.
++  //   doh_only        → force MODE_TRRONLY (no fallback to OS DNS)
++  //   proxy_socks_dns → force MODE_TRROFF (let SOCKS handle DNS)
++  {
++    const std::string& strategy = TegufoxBaseGetDnsStrategy();
++    if (strategy == "doh_only") {
++      mMode = nsIDNSService::MODE_TRRONLY;
++    } else if (strategy == "proxy_socks_dns") {
++      mMode = nsIDNSService::MODE_TRROFF;
++    }
++  }
++
+   if (mMode != oldMode) {
+     LOG(("TRR Mode changed from %d to %d", oldMode, int(mMode)));
+     nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
