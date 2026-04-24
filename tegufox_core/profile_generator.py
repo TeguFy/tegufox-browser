@@ -30,6 +30,12 @@ from datetime import datetime
 from typing import Dict, List, Tuple, Optional
 from .webgl_database import WEBGL_CONFIGS, get_random_webgl, get_webgl_for_profile
 from .database import ProfileDatabase
+from .browser_versions import (
+    build_firefox_ua,
+    build_safari_ua,
+    FIREFOX_LATEST_VERSIONS,
+    SAFARI_LATEST_COMBOS,
+)
 
 
 # Common screen resolutions by OS
@@ -117,30 +123,38 @@ FONTS = {
     ],
 }
 
-# User-Agent templates
+# Real UA is built per-profile from browser_versions.py — every generated
+# profile rotates through the 10 latest stable releases. USER_AGENTS is kept
+# only as a legacy lookup of *one* representative string for backwards
+# compatibility; do not use for new code.
 USER_AGENTS = {
     'firefox': {
-        'windows': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:115.0) Gecko/20100101 Firefox/115.0',
-        'macos': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Firefox/115.0',
-        'linux': 'Mozilla/5.0 (X11; Linux x86_64; rv:115.0) Gecko/20100101 Firefox/115.0',
+        'windows': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:150.0) Gecko/20100101 Firefox/150.0',
+        'macos':   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:150.0) Gecko/20100101 Firefox/150.0',
+        'linux':   'Mozilla/5.0 (X11; Linux x86_64; rv:150.0) Gecko/20100101 Firefox/150.0',
     },
     'safari': {
-        'macos': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15',
+        'macos': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 26_4_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.4.1 Safari/605.1.15',
     },
 }
 
 # DNS providers
+# Firefox uses Mozilla's Cloudflare DoH endpoint by default (the TRR URI shipped
+# in about:preferences #privacy). Match it so detection sites that check
+# "DNS resolver = expected Firefox DoH" pass. Quad9's egress IPs are routed
+# via transit networks (e.g. 74.63.x.x Choopa) that don't match Mozilla's
+# published Cloudflare ranges and are flagged as "unknown resolver" = DNS leak.
 DNS_PROVIDERS = {
     'firefox': {
-        'provider': 'quad9',
-        'rationale': 'Firefox privacy-focused, Quad9 non-profit aligns with Mozilla values',
-        'uri': 'https://dns.quad9.net/dns-query',
-        'bootstrap': '9.9.9.9',
+        'provider': 'cloudflare',
+        'rationale': 'Firefox default TRR URI (mozilla.cloudflare-dns.com) — DNS queries resolve via Cloudflare anycast which most detection sites recognize as legitimate Firefox DoH.',
+        'uri': 'https://cloudflare-dns.com/dns-query',
+        'bootstrap': '1.1.1.1',
     },
     'safari': {
         'provider': 'cloudflare',
         'rationale': 'Apple uses Cloudflare for iCloud Private Relay',
-        'uri': 'https://mozilla.cloudflare-dns.com/dns-query',
+        'uri': 'https://cloudflare-dns.com/dns-query',
         'bootstrap': '1.1.1.1',
     },
 }
@@ -410,11 +424,13 @@ def generate_profile(config: Dict) -> Dict:
     # Fonts
     fonts = _get_random_fonts(config['os'])
     
-    # User-Agent
+    # User-Agent — random pick from the 10 latest stable releases (browser_versions.py).
+    # Safari entries pair a Safari version with a plausible macOS token.
     if config['browser'] == 'safari':
-        user_agent = USER_AGENTS['safari']['macos']
+        safari_info = build_safari_ua()
+        user_agent = safari_info['userAgent']
     else:
-        user_agent = USER_AGENTS['firefox'][config['os']]
+        user_agent = build_firefox_ua(config['os'])
     
     # Platform
     platform_map = {
@@ -467,6 +483,7 @@ def generate_profile(config: Dict) -> Dict:
             'notes': f"Generated profile for {config['browser']} on {config['os']}",
         },
         'os': config['os'],
+        'browser': config['browser'],
         'fingerprint': fingerprint,
         'timezone': timezone,
         'timezoneOffset': timezone_offset,

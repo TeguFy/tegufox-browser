@@ -37,33 +37,26 @@ from .profile_manager import BROWSER_TEMPLATES, DOH_PROVIDERS, ProfileManager
 #   Chrome on Linux    ~ 0.03
 #   (Edge/Opera/etc. not modeled here)
 MARKET_DISTRIBUTIONS: dict = {
-    # Chrome versions (50% total)
-    ("chrome-144",  "windows"): 0.22,
-    ("chrome-144",  "macos"):   0.05,
-    ("chrome-135",  "windows"): 0.12,
-    ("chrome-135",  "macos"):   0.03,
-    ("chrome-135",  "linux"):   0.02,
-    ("chrome-131",  "windows"): 0.04,
-    ("chrome-120",  "windows"): 0.02,
-    
-    # Safari versions (25% total - macOS only)
-    ("safari-19",   "macos"):   0.09,
-    ("safari-18",   "macos"):   0.10,
-    ("safari-17",   "macos"):   0.04,
-    ("safari-16",   "macos"):   0.02,
-    
-    # Firefox versions (25% total)
-    ("firefox-145", "windows"): 0.05,
-    ("firefox-145", "macos"):   0.01,
-    ("firefox-145", "linux"):   0.02,
-    ("firefox-140", "windows"): 0.04,
-    ("firefox-140", "linux"):   0.02,
-    ("firefox-130", "windows"): 0.03,
-    ("firefox-128", "windows"): 0.02,
-    ("firefox-128", "linux"):   0.01,
-    ("firefox-125", "windows"): 0.02,
-    ("firefox-120", "windows"): 0.01,
-    ("firefox-115", "linux"):   0.02,
+    # Chrome versions (50% total) — latest 4 majors cover ~95% of real Chrome
+    ("chrome-147",  "windows"): 0.24,
+    ("chrome-147",  "macos"):   0.05,
+    ("chrome-146",  "windows"): 0.12,
+    ("chrome-146",  "macos"):   0.02,
+    ("chrome-146",  "linux"):   0.02,
+    ("chrome-145",  "windows"): 0.03,
+    ("chrome-144",  "windows"): 0.02,
+
+    # Safari versions (25% total — macOS only, Tahoe 26.x adoption > Sequoia now)
+    ("safari-26",   "macos"):   0.14,
+    ("safari-19",   "macos"):   0.07,
+    ("safari-18",   "macos"):   0.04,
+
+    # Firefox versions (25% total) — PINNED to real engine milestone 146.0.x.
+    # Do not add entries for other majors: JS feature probes will flag the
+    # mismatch (we saw both "claims 150 / detect 146" and "claims 143 / detect 146").
+    ("firefox-146", "windows"): 0.17,
+    ("firefox-146", "macos"):   0.03,
+    ("firefox-146", "linux"):   0.05,
 }
 
 

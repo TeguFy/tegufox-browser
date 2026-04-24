@@ -92,13 +92,18 @@ def prepare_runtime(
     timezone: Optional[str] = None,
     doh_uri: str = DEFAULT_DOH_URI,
     config_path: Optional[str] = None,
+    dns_strategy_override: Optional[str] = None,
 ) -> Dict[str, str]:
     """Resolve + persist runtime config. Returns env vars to pass to browser.
 
     Strategy:
         - If proxy given:    dns_strategy = proxy_socks_dns, TZ from proxy IP
-        - If no proxy:       dns_strategy = doh_only,         TZ from param or system
+        - If no proxy:       dns_strategy = doh_only (unless overridden)
         - Explicit timezone param always wins over proxy detection.
+        - `dns_strategy_override` lets the caller force 'native' (OS DNS) for
+          countries where real Firefox doesn't auto-enable DoH — the C++
+          patch reads this and decides between MODE_TRRONLY / MODE_TRROFF /
+          Firefox-default.
 
     Returns:
         Dict of env vars: {TZ, CAMOUFOX_TZ_OVERRIDE, TEGUFOX_RUNTIME_CONFIG}
@@ -113,7 +118,10 @@ def prepare_runtime(
             )
 
     # DNS strategy resolution
-    dns_strategy = "proxy_socks_dns" if proxy_config else "doh_only"
+    if dns_strategy_override:
+        dns_strategy = dns_strategy_override
+    else:
+        dns_strategy = "proxy_socks_dns" if proxy_config else "doh_only"
 
     target = resolve_config_path(config_path)
     target.parent.mkdir(parents=True, exist_ok=True)

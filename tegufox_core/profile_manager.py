@@ -29,8 +29,24 @@ import copy
 
 try:
     from .database import ProfileDatabase
+    from .browser_versions import (
+        FIREFOX_LATEST_VERSIONS,
+        CHROME_LATEST_VERSIONS,
+        SAFARI_LATEST_COMBOS,
+        build_firefox_ua,
+        build_chrome_ua,
+        build_safari_ua,
+    )
 except ImportError:
     from database import ProfileDatabase
+    from browser_versions import (
+        FIREFOX_LATEST_VERSIONS,
+        CHROME_LATEST_VERSIONS,
+        SAFARI_LATEST_COMBOS,
+        build_firefox_ua,
+        build_chrome_ua,
+        build_safari_ua,
+    )
 
 # Profile templates and validation data
 BROWSER_TEMPLATES = {
@@ -202,7 +218,7 @@ _OS_NAVIGATOR: dict = {
             "platform": "Win32",
         },
         "macos": {
-            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14.1; rv:115.0) Gecko/20100101 Firefox/115.0",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:115.0) Gecko/20100101 Firefox/115.0",
             "platform": "MacIntel",
         },
         "linux": {
@@ -216,7 +232,7 @@ _OS_NAVIGATOR: dict = {
             "platform": "Win32",
         },
         "macos": {
-            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14.1; rv:120.0) Gecko/20100101 Firefox/120.0",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:120.0) Gecko/20100101 Firefox/120.0",
             "platform": "MacIntel",
         },
         "linux": {
@@ -230,7 +246,7 @@ _OS_NAVIGATOR: dict = {
             "platform": "Win32",
         },
         "macos": {
-            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14.5; rv:125.0) Gecko/20100101 Firefox/125.0",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:125.0) Gecko/20100101 Firefox/125.0",
             "platform": "MacIntel",
         },
         "linux": {
@@ -244,7 +260,7 @@ _OS_NAVIGATOR: dict = {
             "platform": "Win32",
         },
         "macos": {
-            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14.6; rv:128.0) Gecko/20100101 Firefox/128.0",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:128.0) Gecko/20100101 Firefox/128.0",
             "platform": "MacIntel",
         },
         "linux": {
@@ -258,7 +274,7 @@ _OS_NAVIGATOR: dict = {
             "platform": "Win32",
         },
         "macos": {
-            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14.7; rv:130.0) Gecko/20100101 Firefox/130.0",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:130.0) Gecko/20100101 Firefox/130.0",
             "platform": "MacIntel",
         },
         "linux": {
@@ -272,7 +288,7 @@ _OS_NAVIGATOR: dict = {
             "platform": "Win32",
         },
         "macos": {
-            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 15.2; rv:135.0) Gecko/20100101 Firefox/135.0",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:135.0) Gecko/20100101 Firefox/135.0",
             "platform": "MacIntel",
         },
         "linux": {
@@ -286,7 +302,7 @@ _OS_NAVIGATOR: dict = {
             "platform": "Win32",
         },
         "macos": {
-            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 15.5; rv:140.0) Gecko/20100101 Firefox/140.0",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:140.0) Gecko/20100101 Firefox/140.0",
             "platform": "MacIntel",
         },
         "linux": {
@@ -300,7 +316,7 @@ _OS_NAVIGATOR: dict = {
             "platform": "Win32",
         },
         "macos": {
-            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 15.6; rv:145.0) Gecko/20100101 Firefox/145.0",
+            "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:145.0) Gecko/20100101 Firefox/145.0",
             "platform": "MacIntel",
         },
         "linux": {
@@ -409,6 +425,77 @@ _OS_NAVIGATOR: dict = {
         },
     },
 }
+
+
+# -----------------------------------------------------------------------------
+# Modern version entries: generated at import time from browser_versions.py so
+# every release in the latest-10 pool is addressable as a template key.
+# -----------------------------------------------------------------------------
+def _expand_modern_version_tables() -> None:
+    _pseudo_hdr = {
+        "chrome":  ["method", "authority", "scheme", "path"],
+        "firefox": ["method", "path", "authority", "scheme"],
+        "safari":  ["method", "scheme", "authority", "path"],
+    }
+    _platform_by_os = {"windows": "Win32", "macos": "MacIntel", "linux": "Linux x86_64"}
+
+    for v in FIREFOX_LATEST_VERSIONS:
+        key = f"firefox-{v}"
+        BROWSER_TEMPLATES.setdefault(key, {
+            "name": f"Firefox {v}",
+            "user_agent": build_firefox_ua("windows", v),
+            "vendor": "",
+            "platform": "Win32",
+            "doh_provider": "quad9",
+            "ja3": "de350869b8c85de67a350c8d186f11e6",
+            "pseudo_header_order": _pseudo_hdr["firefox"],
+        })
+        _OS_NAVIGATOR.setdefault(key, {
+            os_: {"userAgent": build_firefox_ua(os_, v), "platform": _platform_by_os[os_]}
+            for os_ in ("windows", "macos", "linux")
+        })
+
+    for v in CHROME_LATEST_VERSIONS:
+        key = f"chrome-{v}"
+        BROWSER_TEMPLATES.setdefault(key, {
+            "name": f"Chrome {v}",
+            "user_agent": build_chrome_ua("windows", v),
+            "vendor": "Google Inc.",
+            "platform": "Win32",
+            "doh_provider": "cloudflare",
+            "ja3": "579ccef312d18482fc42e2b822ca2430",
+            "pseudo_header_order": _pseudo_hdr["chrome"],
+        })
+        _OS_NAVIGATOR.setdefault(key, {
+            os_: {"userAgent": build_chrome_ua(os_, v), "platform": _platform_by_os[os_]}
+            for os_ in ("windows", "macos", "linux")
+        })
+
+    # Safari: key by major (safari-18, safari-19, safari-26). Each key gets a
+    # representative combo; the randomizer lives in browser_versions.build_safari_ua.
+    _safari_by_major: Dict[int, dict] = {}
+    for combo in SAFARI_LATEST_COMBOS:
+        major = int(combo["version"].split(".")[0])
+        _safari_by_major.setdefault(major, combo)
+    for major, combo in _safari_by_major.items():
+        key = f"safari-{major}"
+        info = build_safari_ua(combo)
+        BROWSER_TEMPLATES.setdefault(key, {
+            "name": f"Safari {major} ({combo['macos_label']})",
+            "user_agent": info["userAgent"],
+            "vendor": "Apple Computer, Inc.",
+            "platform": "MacIntel",
+            "doh_provider": "cloudflare",
+            "ja3": "66818e4f5f48d10b27e4892c00347c3f",
+            "pseudo_header_order": _pseudo_hdr["safari"],
+        })
+        _OS_NAVIGATOR.setdefault(key, {
+            os_: {"userAgent": info["userAgent"], "platform": "MacIntel"}
+            for os_ in ("windows", "macos", "linux")
+        })
+
+
+_expand_modern_version_tables()
 
 DOH_PROVIDERS = {
     "cloudflare": {

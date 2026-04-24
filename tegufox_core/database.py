@@ -66,6 +66,7 @@ class Profile(Base):
             "created": self.created.strftime("%Y-%m-%d") if self.created else None,
             "version": self.version,
             "os": self.os,
+            "browser": self.browser,
             "timezone": self.timezone,
             "timezoneOffset": self.timezone_offset,
         }

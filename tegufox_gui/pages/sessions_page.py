@@ -444,7 +444,7 @@ class SessionsWidget(QWidget):
         """
         for label, qurl in [
             ("browserleaks", "https://browserleaks.com"),
-            ("browserscan", "https://www.browserscan.net/bot-detection"),
+            ("browserscan", "https://www.browserscan.net/"),
             ("pixelscan", "https://pixelscan.net"),
             ("fp.com", "https://fingerprint.com/demo"),
         ]:

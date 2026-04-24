@@ -94,6 +94,305 @@ logging.basicConfig(
 logger = logging.getLogger("tegufox_automation")
 
 
+def _background_channel_kill_prefs() -> Dict[str, Any]:
+    """Firefox prefs that disable every background channel that can leak DNS
+    (or traffic) *independently of whether a proxy is configured*.
+
+    Applied in BOTH no-proxy and proxy sessions — without proxy these channels
+    still leak DNS to the OS resolver (detection sites saw 5+ resolvers on a
+    no-proxy session); with proxy they can bypass the tunnel (captive portal
+    fires before proxy is up, OCSP uses OS DNS).
+    """
+    return {
+        # Captive portal / connectivity probe (detectportal.firefox.com)
+        'network.captive-portal-service.enabled': False,
+        'network.connectivity-service.enabled': False,
+
+        # OCSP (cert revocation) — uses OS DNS regardless of DoH
+        'security.OCSP.enabled': 0,
+        'security.OCSP.require': False,
+
+        # Safebrowsing — Google Safe Browsing phone-home
+        'browser.safebrowsing.malware.enabled': False,
+        'browser.safebrowsing.phishing.enabled': False,
+        'browser.safebrowsing.downloads.enabled': False,
+        'browser.safebrowsing.downloads.remote.enabled': False,
+        'browser.safebrowsing.downloads.remote.block_potentially_unwanted': False,
+        'browser.safebrowsing.downloads.remote.block_uncommon': False,
+        'browser.safebrowsing.blockedURIs.enabled': False,
+
+        # Telemetry
+        'toolkit.telemetry.enabled': False,
+        'toolkit.telemetry.archive.enabled': False,
+        'toolkit.telemetry.unified': False,
+        'toolkit.telemetry.server': '',
+        'datareporting.healthreport.uploadEnabled': False,
+        'datareporting.policy.dataSubmissionEnabled': False,
+
+        # Auto-update + blocklist
+        'extensions.update.enabled': False,
+        'extensions.getAddons.cache.enabled': False,
+        'extensions.blocklist.enabled': False,
+        'app.update.enabled': False,
+        'app.update.auto': False,
+
+        # Firefox Accounts / Sync
+        'identity.fxaccounts.enabled': False,
+        'services.sync.prefs.sync.engine.addresses': False,
+
+        # Search / URL bar speculative
+        'browser.search.suggest.enabled': False,
+        'browser.urlbar.suggest.searches': False,
+        'browser.urlbar.speculativeConnect.enabled': False,
+
+        # Speculative / preconnect / prefetch
+        'network.http.speculative-parallel-limit': 0,
+        'network.predictor.enabled': False,
+        'network.prefetch-next': False,
+        'network.dns.disablePrefetch': True,
+
+        # HTTP/3 (QUIC / UDP) — UDP skips HTTP proxies entirely
+        'network.http.http3.enabled': False,
+        'network.http.http3.enable_qlog': False,
+
+        # IPv6 — separate path, easy leak vector
+        'network.dns.disableIPv6': True,
+
+        # DNS misc
+        'network.dns.blockDotOnion': True,
+        'network.dns.echoAPI': False,
+    }
+
+
+def _dns_via_proxy_prefs(*, is_socks5: bool) -> Dict[str, Any]:
+    """DNS routing when a proxy IS configured — disable DoH so the proxy's
+    own resolver handles lookups (matches exit IP's ASN, avoids the
+    'my DNS = Cloudflare / my IP = residential ISP' detection pattern).
+
+    SOCKS5 additionally enables `socks_remote_dns` so hostnames travel
+    through the SOCKS5 tunnel intact."""
+    prefs: Dict[str, Any] = {
+        'network.trr.mode': 5,                         # DoH disabled
+        'network.trr.strict_native_fallback': False,
+        'network.proxy.proxy_over_tls': True,
+
+        # WebRTC — force ICE through proxy only
+        'media.peerconnection.ice.proxy_only': True,
+        'media.peerconnection.ice.proxy_only_if_behind_proxy': True,
+        'media.peerconnection.ice.default_address_only': True,
+    }
+    if is_socks5:
+        prefs['network.proxy.socks_remote_dns'] = True
+        prefs['network.proxy.socks_version'] = 5
+    return prefs
+
+
+# Countries where real Firefox auto-enables DoH by default. For users in
+# these regions, detection sites expect DoH → Cloudflare and DON'T flag it.
+# For users elsewhere (VN, JP, KR, CN, etc.), real Firefox ships with DoH OFF,
+# so the expected resolver is the ISP's. Using DoH from e.g. a Vietnam IP
+# makes the resolver ASN (Cloudflare) mismatch the exit IP's ASN (Viettel)
+# and detection sites flag it as "DNS Leak: Yes" even though it's encrypted.
+#
+# Source: Mozilla's DoH rollout tracker (https://support.mozilla.org/kb/firefox-dns-over-https)
+_DOH_AUTO_COUNTRIES: set = {
+    "US", "CA", "GB", "DE", "AT",
+    # Expand cautiously — only countries where DoH is Firefox default.
+}
+
+
+def _country_expects_doh(country_code: str) -> bool:
+    return (country_code or "").upper() in _DOH_AUTO_COUNTRIES
+
+
+def _dns_via_os_prefs() -> Dict[str, Any]:
+    """DNS routing when the exit-IP's country does NOT auto-enable DoH in real
+    Firefox (e.g. Vietnam, Japan, most of Asia). Turn DoH off so DNS queries
+    go via OS resolver and the resolver's ASN matches the exit IP's ISP —
+    which is exactly what a real Firefox user in that country would show.
+
+    Counter-intuitive but correct for anti-detection: allowing OS-DNS is the
+    'natural' Firefox behaviour in these regions; forcing DoH would make the
+    profile stand out as atypical."""
+    return {
+        'network.trr.mode': 5,                         # TRR off, OS resolver wins
+        'network.trr.strict_native_fallback': False,
+        # Leave IPv6 enabled here — we're simulating a normal user
+        'network.dns.disableIPv6': False,
+        # But still kill WebRTC ICE leaks (would expose real LAN IP)
+        'media.peerconnection.ice.default_address_only': True,
+        'media.peerconnection.ice.no_host': True,
+        'media.peerconnection.ice.obfuscate_host_addresses': True,
+    }
+
+
+# Named DoH providers. `cloudflare` is the default — `cloudflare-dns.com`
+# (NOT `mozilla.cloudflare-dns.com`, which sometimes refuses to resolve
+# certain domains due to Mozilla's partner privacy filters — confirmed
+# with fv.pro failing via the Mozilla variant but resolving cleanly via
+# standard Cloudflare).
+DOH_PROVIDERS: Dict[str, Dict[str, str]] = {
+    "cloudflare":         {"uri": "https://cloudflare-dns.com/dns-query",       "bootstrap": "1.1.1.1"},
+    "cloudflare-mozilla": {"uri": "https://mozilla.cloudflare-dns.com/dns-query","bootstrap": "1.1.1.1"},
+    "google":             {"uri": "https://dns.google/dns-query",               "bootstrap": "8.8.8.8"},
+    "quad9":              {"uri": "https://dns.quad9.net/dns-query",            "bootstrap": "9.9.9.9"},
+    "adguard":            {"uri": "https://dns.adguard-dns.com/dns-query",      "bootstrap": "94.140.14.14"},
+}
+
+
+def _dns_via_doh_prefs(doh_uri: str = "https://cloudflare-dns.com/dns-query",
+                       bootstrap_ip: str = "1.1.1.1") -> Dict[str, Any]:
+    """DNS routing when NO proxy is configured — force strict DoH so every
+    DNS query goes through a single encrypted channel. Without this, Firefox
+    falls back to the OS resolver (local ISP) and detection sites see the
+    real resolver IP (74.63.x.x etc.) plus any parallel-resolved hosts."""
+    return {
+        # Core TRR mode
+        'network.trr.mode': 3,                          # TRR-only, no OS fallback
+        'network.trr.strict_native_fallback': False,
+        'network.trr.uri': doh_uri,
+        'network.trr.custom_uri': doh_uri,
+        'network.trr.bootstrapAddress': bootstrap_ip,
+        'network.trr.disable-ECS': True,                # don't leak client subnet
+        'network.trr.early-AAAA': False,
+        'network.trr.max_fails': 5,
+        'network.trr.request_timeout_ms': 3000,
+
+        # TRR startup gates — without these, Firefox waits for captive portal
+        # or confirmation before using TRR, and DNS queries made during that
+        # window fall back to OS resolver.
+        'network.trr.wait-for-portal': False,
+        'network.trr.wait-for-confirmation': False,
+        'network.trr.skip-AAAA-when-not-supported': True,
+        'network.trr.allow-rfc1918': False,
+        'network.trr.fallback-on-zero-response': False,
+
+        # TRR confirmation — use a cheap hostname, resolve via TRR only.
+        'network.trr.confirmationNS': 'example.com',
+
+        # Disable native DNS as a "parallel" race (some Firefox builds try
+        # native+TRR in parallel for speed; kill the native side).
+        'network.dns.native-is-localhost': False,
+        'network.dns.force-use-https-rr': False,        # don't auto-use HTTPS RR which may use native
+        'network.dns.port_prefetch': False,
+
+        # WebRTC ICE — even without proxy, default_address_only hides LAN IPs
+        'media.peerconnection.ice.default_address_only': True,
+        'media.peerconnection.ice.no_host': True,
+        'media.peerconnection.ice.obfuscate_host_addresses': True,
+    }
+
+
+# ---------------------------------------------------------------------------
+# IP → locale / timezone auto-sync
+#
+# When a profile runs without a proxy, its stored navigator.language / timezone
+# will be whatever the profile generator picked (usually en-US / America/*).
+# Detection sites flag that as inconsistent with the exit IP's geolocation.
+# This helper probes the exit IP once at session start and computes a
+# coherent (language, timezone, geolocation) triple that matches the IP.
+# ---------------------------------------------------------------------------
+
+# Primary language by ISO-3166 country code. We pick ONE primary language per
+# country — dual-official countries default to the dominant consumer locale.
+# Fallback: 'en' (the safest claim when we genuinely don't know).
+_COUNTRY_TO_LANGUAGE: Dict[str, str] = {
+    'VN': 'vi-VN', 'TH': 'th-TH', 'ID': 'id-ID', 'PH': 'en-PH', 'MY': 'ms-MY',
+    'SG': 'en-SG', 'JP': 'ja-JP', 'KR': 'ko-KR', 'CN': 'zh-CN', 'TW': 'zh-TW',
+    'HK': 'zh-HK', 'IN': 'en-IN', 'PK': 'en-PK', 'BD': 'bn-BD', 'LK': 'si-LK',
+    'US': 'en-US', 'CA': 'en-CA', 'MX': 'es-MX', 'BR': 'pt-BR', 'AR': 'es-AR',
+    'CL': 'es-CL', 'CO': 'es-CO', 'PE': 'es-PE', 'VE': 'es-VE',
+    'GB': 'en-GB', 'IE': 'en-IE', 'AU': 'en-AU', 'NZ': 'en-NZ',
+    'FR': 'fr-FR', 'DE': 'de-DE', 'IT': 'it-IT', 'ES': 'es-ES', 'PT': 'pt-PT',
+    'NL': 'nl-NL', 'BE': 'nl-BE', 'AT': 'de-AT', 'CH': 'de-CH',
+    'PL': 'pl-PL', 'CZ': 'cs-CZ', 'SK': 'sk-SK', 'HU': 'hu-HU', 'RO': 'ro-RO',
+    'GR': 'el-GR', 'BG': 'bg-BG', 'HR': 'hr-HR', 'RS': 'sr-RS',
+    'SE': 'sv-SE', 'NO': 'nb-NO', 'DK': 'da-DK', 'FI': 'fi-FI', 'IS': 'is-IS',
+    'EE': 'et-EE', 'LV': 'lv-LV', 'LT': 'lt-LT',
+    'RU': 'ru-RU', 'UA': 'uk-UA', 'BY': 'be-BY', 'KZ': 'kk-KZ',
+    'TR': 'tr-TR', 'IL': 'he-IL', 'AE': 'ar-AE', 'SA': 'ar-SA', 'EG': 'ar-EG',
+    'ZA': 'en-ZA', 'NG': 'en-NG', 'KE': 'en-KE', 'MA': 'ar-MA',
+}
+
+
+def _language_for_country(cc: str) -> str:
+    return _COUNTRY_TO_LANGUAGE.get((cc or "").upper(), "en-US")
+
+
+def lookup_ip_geo(proxy_url: Optional[str] = None, timeout: float = 5.0) -> Dict[str, Any]:
+    """Probe ip-api.com for exit-IP metadata (country, timezone, lat/lon).
+
+    Uses the free unauthenticated endpoint — rate-limited but fine for a
+    once-per-session lookup. Returns {} on any failure (caller should treat
+    that as 'skip the override')."""
+    import httpx
+    url = "http://ip-api.com/json?fields=status,message,query,countryCode,timezone,offset,lat,lon"
+    try:
+        if proxy_url:
+            client = httpx.Client(proxy=proxy_url, timeout=timeout)
+        else:
+            client = httpx.Client(timeout=timeout)
+        with client:
+            resp = client.get(url)
+            data = resp.json()
+        if data.get("status") != "success":
+            logger.warning(f"ip-api returned non-success: {data.get('message', data)}")
+            return {}
+        return {
+            "ip":          data.get("query"),
+            "country":     data.get("countryCode"),  # 'VN', 'US', etc.
+            "timezone":    data.get("timezone"),     # 'Asia/Ho_Chi_Minh'
+            "offset":      data.get("offset"),       # seconds from UTC
+            "lat":         data.get("lat"),
+            "lon":         data.get("lon"),
+            "language":    _language_for_country(data.get("countryCode") or ""),
+        }
+    except Exception as e:
+        logger.warning(f"ip-api lookup failed: {e}")
+        return {}
+
+
+def verify_dns_routing(page, expected_ip: Optional[str] = None, timeout: int = 15) -> Dict[str, Any]:
+    """Runtime probe that the session's HTTP traffic is exiting through the proxy.
+
+    Caller supplies an open Playwright `page`. We fetch a JSON endpoint that
+    echoes the caller's IP (am.i.mullvad.net) and compare against
+    `expected_ip` if given. A full DNS-leak test requires an authoritative
+    DNS log (not possible without a controlled domain), so this probe verifies
+    the traffic-routing half — when combined with `socks_remote_dns=True`
+    (enforced by `_proxy_hardening_prefs`), DNS follows the same path.
+
+    Returns: {'ok': bool, 'exit_ip': str|None, 'expected_ip': str|None,
+              'country': str|None, 'mullvad_exit': bool, 'error': str|None}
+    """
+    result: Dict[str, Any] = {
+        'ok': False, 'exit_ip': None, 'expected_ip': expected_ip,
+        'country': None, 'mullvad_exit': False, 'error': None,
+    }
+    try:
+        resp = page.request.get('https://am.i.mullvad.net/json', timeout=timeout * 1000)
+        if not resp.ok:
+            result['error'] = f"mullvad API HTTP {resp.status}"
+            return result
+        data = resp.json()
+        result['exit_ip'] = data.get('ip')
+        result['country'] = data.get('country')
+        result['mullvad_exit'] = bool(data.get('mullvad_exit_ip'))
+        if expected_ip:
+            result['ok'] = (result['exit_ip'] == expected_ip)
+            if not result['ok']:
+                result['error'] = (
+                    f"exit IP {result['exit_ip']} != proxy IP {expected_ip} — "
+                    "traffic is not routing through proxy"
+                )
+        else:
+            result['ok'] = bool(result['exit_ip'])
+    except Exception as e:
+        result['error'] = f"probe failed: {e}"
+    return result
+
+
+
 @dataclass
 class SessionConfig:
     """Configuration for TegufoxSession"""
@@ -118,6 +417,28 @@ class SessionConfig:
     # Override path for runtime.json (consumed by C++ patches).
     # Default: $TEGUFOX_RUNTIME_CONFIG env var > ~/.tegufox/runtime.json
     runtime_config_path: Optional[str] = None
+
+    # DNS strategy for no-proxy sessions:
+    #   "auto" (default) — geo-adaptive: DoH for US/CA/GB/DE/AT (where real
+    #                      Firefox ships DoH on by default), OS DNS for all
+    #                      other countries. Resolver ASN always matches what
+    #                      a real Firefox user in that country would show,
+    #                      so detection sites don't flag "DNS Leak: Yes".
+    #                      ISP-censored sites still load via ISP DNS.
+    #   "doh"            — force Cloudflare DoH. Bypasses ISP DNS censorship
+    #                      but some sites flag the resolver ASN mismatch.
+    #   "os"             — force OS resolver. Matches ISP ASN but ISP-blocked
+    #                      sites won't load (for use-cases where site censorship
+    #                      isn't a concern).
+    # Proxy sessions always use proxy-side DNS regardless of this setting.
+    dns_strategy: str = "auto"
+
+    # DoH provider name when dns_strategy ends up using DoH. See DOH_PROVIDERS
+    # for valid values. Default "cloudflare" (cloudflare-dns.com) is the most
+    # permissive and resolves domains like fv.pro that the Mozilla-partner
+    # variant refuses. Switch to "google" or "adguard" if a specific domain
+    # still fails; "quad9" has the strictest malware filtering.
+    doh_provider: str = "cloudflare"
 
     # Anti-detection settings
     enable_dns_leak_prevention: bool = True
@@ -279,6 +600,11 @@ class TegufoxSession:
 
     def _start_tegufox(self):
         """Launch Firefox via Tegufox for all UA profiles."""
+        # Resolve exit-IP geolocation once, BEFORE launch options are built,
+        # so the launch-time navigator.language override propagates to the
+        # C++ MaskConfig (via camoufox_config) as well as HTTP headers.
+        self._resolve_exit_ip_geo()
+
         # Build launch options (passed to Tegufox at browser start)
         launch_opts = self._build_launch_options()
 
@@ -313,10 +639,27 @@ class TegufoxSession:
         # Sets TZ, CAMOUFOX_TZ_OVERRIDE, TEGUFOX_RUNTIME_CONFIG env vars.
         # Raises RuntimeError if proxy timezone cannot be resolved (STRICT policy).
         from tegufox_core.runtime_config import prepare_runtime
+
+        # Tell the C++ patch what DNS routing to enforce at engine level.
+        # Must agree with the prefs chosen in _build_launch_options above.
+        dns_strategy_override = None
+        if not proxy_config:
+            mode = (self.config.dns_strategy or "doh").lower()
+            geo = getattr(self, '_geo_data', None) or {}
+            country = geo.get('country', '')
+            if mode == "doh":
+                use_doh = True
+            elif mode == "os":
+                use_doh = False
+            else:  # auto
+                use_doh = _country_expects_doh(country)
+            dns_strategy_override = "doh_only" if use_doh else "native"
+
         runtime_env = prepare_runtime(
             proxy_config=proxy_config,
             timezone=self.config.timezone,
             config_path=self.config.runtime_config_path,
+            dns_strategy_override=dns_strategy_override,
         )
         camoufox_env = dict(_os.environ)
         camoufox_env.update(runtime_env)
@@ -370,9 +713,13 @@ class TegufoxSession:
                 **launch_opts,
             )
         else:
+            # geoip=False even for no-proxy: Camoufox's default geoip=True
+            # fetches public IP via OS DNS at startup, which leaks to ISP
+            # resolver and shows up in DNS-leak detection.
             self._camoufox = Camoufox(
                 headless=self.config.headless,
                 i_know_what_im_doing=True,
+                geoip=False,
                 env=camoufox_env,
                 **launch_opts,
             )
@@ -823,6 +1170,56 @@ class TegufoxSession:
         data = f"{self.profile.get('name', 'unknown')}-{time.time()}-{random.random()}"
         return hashlib.sha256(data.encode()).hexdigest()[:16]
 
+    def _resolve_exit_ip_geo(self) -> None:
+        """Probe exit IP and mutate profile so navigator.language / timezone /
+        geolocation match the IP's country. Result cached in self._geo_data
+        for later use by `_build_context_options`.
+
+        Called once per session before launch options are built. Idempotent
+        if already resolved."""
+        if getattr(self, '_geo_data', None) is not None:
+            return
+        self._geo_data = {}
+        try:
+            proxy_url: Optional[str] = None
+            if self.config.proxy:
+                from urllib.parse import urlparse
+                p = self.config.proxy
+                parsed = urlparse(p.get("server", ""))
+                user, pwd = p.get("username", ""), p.get("password", "")
+                if user and pwd:
+                    proxy_url = f"{parsed.scheme}://{user}:{pwd}@{parsed.hostname}:{parsed.port}"
+                else:
+                    proxy_url = p.get("server", "")
+            self._geo_data = lookup_ip_geo(proxy_url=proxy_url)
+        except Exception as e:
+            logger.warning(f"exit-IP geo resolve failed: {e}")
+            return
+
+        g = self._geo_data
+        if not g:
+            return
+
+        # Language sync — only override if profile's language disagrees.
+        # Manual self.config.timezone takes priority for timezone but we don't
+        # have a language override field yet, so any geo language wins.
+        geo_lang = g.get("language")
+        profile_lang = self.profile.get('navigator', {}).get('language', '')
+        if geo_lang and profile_lang != geo_lang:
+            logger.info(
+                f"Language auto-sync: {profile_lang!r} → {geo_lang!r} "
+                f"(IP country: {g.get('country')})"
+            )
+            self.profile.setdefault('navigator', {})
+            self.profile['navigator']['language'] = geo_lang
+            base = geo_lang.split('-')[0]
+            self.profile['navigator']['languages'] = (
+                [geo_lang, base] if base != geo_lang else [geo_lang]
+            )
+
+        if g.get("ip"):
+            self.profile['webrtc_ip'] = g["ip"]
+
     def _configure_dns(self) -> None:
         """Apply DNS leak prevention from profile"""
         dns_config = self.profile.get("dns_config", {})
@@ -951,6 +1348,18 @@ class TegufoxSession:
         # Set via C++ CAMOU_CONFIG because JS defineProperty may fail on non-configurable props.
         if is_chrome_ua or is_safari_ua:
             camoufox_config['navigator.buildID'] = ''  # empty string → not the Firefox value
+        elif is_firefox_ua:
+            # Keep buildID in sync with the Firefox/X.Y.Z token in UA so detectors
+            # that cross-check buildID against Mozilla's release calendar see a
+            # coherent pair. Falls back to the engine milestone.
+            import re as _re
+            from tegufox_core.browser_versions import (
+                firefox_build_id_for,
+                TEGUFOX_FIREFOX_MILESTONE,
+            )
+            m = _re.search(r"Firefox/([\d\.]+)", ua)
+            fx_ver = m.group(1) if m else TEGUFOX_FIREFOX_MILESTONE
+            camoufox_config['navigator.buildID'] = firefox_build_id_for(fx_ver)
 
         # WebRTC: Tegufox sets media.peerconnection.ice.no_host=true globally, which blocks
         # all host ICE candidates (hides local IP). Real Chrome/Firefox expose host candidates
@@ -960,6 +1369,42 @@ class TegufoxSession:
         # MaskConfig to override Firefox's Accept-Encoding. Our custom Tegufox build lacks
         # working Brotli decompression, so we force gzip-only here.
         camoufox_config['headers.Accept-Encoding'] = 'gzip, deflate'
+
+        # Force HTTP Accept-Language through C++ MaskConfig so it matches
+        # navigator.language on every request — detection sites cross-check
+        # HTTP header vs JS navigator.language vs Intl.DateTimeFormat().
+        nav_lang_for_hdr = self.profile.get('navigator', {}).get('language', '')
+        nav_langs_for_hdr = self.profile.get('navigator', {}).get('languages') or []
+        if nav_lang_for_hdr:
+            base = nav_lang_for_hdr.split('-')[0] if '-' in nav_lang_for_hdr else nav_lang_for_hdr
+            if base != nav_lang_for_hdr and base != 'en':
+                accept_lang_hdr = f"{nav_lang_for_hdr},{base};q=0.9,en;q=0.8"
+            elif base != nav_lang_for_hdr:
+                accept_lang_hdr = f"{nav_lang_for_hdr},{base};q=0.9"
+            else:
+                accept_lang_hdr = f"{nav_lang_for_hdr},en;q=0.9" if nav_lang_for_hdr != 'en' else 'en'
+            camoufox_config['headers.Accept-Language'] = accept_lang_hdr
+
+            # `locale-spoofing.patch` hooks these three keys into Firefox's
+            # ICU-backed `Locale::GetDefaultLocale()`, which is what every
+            # Intl.* constructor reads. Without them the webpage locale
+            # (navigator.language) and the SYSTEM locale (Intl API) diverge —
+            # that's the "Language mismatch — webpage does not match system"
+            # flag the detection site shows.
+            if '-' in nav_lang_for_hdr:
+                lang_part, region_part = nav_lang_for_hdr.split('-', 1)
+            else:
+                lang_part, region_part = nav_lang_for_hdr, ''
+            camoufox_config['locale:language'] = lang_part
+            if region_part:
+                camoufox_config['locale:region'] = region_part
+            # `locale:all` takes priority in the patch; feed it the same
+            # comma list that goes into intl.accept_languages so every
+            # surface reads from one source of truth.
+            if nav_langs_for_hdr:
+                camoufox_config['locale:all'] = ','.join(nav_langs_for_hdr)
+            else:
+                camoufox_config['locale:all'] = nav_lang_for_hdr
 
         if camoufox_config:
             opts["config"] = camoufox_config
@@ -1016,32 +1461,110 @@ class TegufoxSession:
         # Disable navigator.webdriver flag — Firefox sets this to true when automated
         _rtc_prefs['dom.webdriver.enabled'] = False
         
+        # ── DNS & background-channel hardening (applies always) ─────────────
+        # Background-channel kill list is unconditional — captive portal,
+        # OCSP, telemetry, safebrowsing etc. leak DNS to OS resolver whether
+        # or not a proxy is set. Detection sites saw 5+ resolvers on a
+        # no-proxy session precisely because these channels fire in parallel
+        # with the user's DoH.
+        _rtc_prefs.update(_background_channel_kill_prefs())
+
+        # ── Language synchronization across ALL Firefox surfaces ─────────
+        # Firefox reads `intl.accept_languages` for: HTTP Accept-Language
+        # header, Intl.DateTimeFormat().resolvedOptions().locale, CSS :lang()
+        # matching, and (as fallback) navigator.language. Setting only
+        # navigator.language via MaskConfig leaves the other surfaces at
+        # en-US, and detection sites cross-check them → "language mismatch".
+        nav_lang = self.profile.get('navigator', {}).get('language', '')
+        nav_langs = self.profile.get('navigator', {}).get('languages') or []
+        if nav_lang:
+            if nav_langs:
+                # Firefox pref is comma-separated with quality scores implicit.
+                _rtc_prefs['intl.accept_languages'] = ','.join(nav_langs)
+            else:
+                _rtc_prefs['intl.accept_languages'] = nav_lang
+            # Also set the regional format locale so Date/Number formatting
+            # matches the claimed language (another cross-check surface).
+            _rtc_prefs['intl.regional_prefs.use_os_locales'] = False
+            _rtc_prefs['intl.locale.requested'] = nav_lang
+            logger.info(f"Language prefs synced: intl.accept_languages={_rtc_prefs['intl.accept_languages']!r}")
+
         # ── Proxy configuration ─────
         # NOTE: Proxy is extracted and passed separately to Camoufox() in _start_tegufox()
         # because Camoufox's launch_options() expects proxy as a named parameter, not in the dict
         if self.config.proxy:
             opts['proxy'] = self.config.proxy
-            logger.debug(f"Proxy will be configured: {self.config.proxy.get('server', 'unknown')}")
-            
-            # PREVENT DNS LEAKS OVER PROXY:
-            # If DoH (network.trr.mode) is active, DNS queries go to Cloudflare (causing leak detection)
-            # because the proxy is used to connect to Cloudflare, but the target server sees Cloudflare's IP.
-            # We force TRR mode = 5 (Explicitly disable DoH) and socks_remote_dns = True
-            # so that ALL DNS queries are resolved by the proxy server itself.
-            
-            _rtc_prefs['network.proxy.socks_remote_dns'] = True
-            _rtc_prefs['network.proxy.proxy_over_tls'] = True
-            _rtc_prefs['network.dns.disablePrefetch'] = True
-            _rtc_prefs['network.dns.disableIPv6'] = True
-            _rtc_prefs['network.dns.blockDotOnion'] = True
-            _rtc_prefs['network.dns.echoAPI'] = False
-            _rtc_prefs['network.trr.mode'] = 5
-            
-            # If HTTP proxy, force DNS resolution on proxy side too
-            if 'http' in str(self.config.proxy.get('server', '')).lower():
-                _rtc_prefs['network.proxy.type'] = 1 # Manual proxy config
-                # Usually playwright handles proxy type automatically, but let's be sure
-                # that Firefox knows to proxy DNS when resolving.
+            proxy_server = str(self.config.proxy.get('server', ''))
+            logger.debug(f"Proxy will be configured: {proxy_server or 'unknown'}")
+
+            # Classify proxy type and warn if not SOCKS5 — only SOCKS5 with
+            # remote_dns guarantees DNS goes through the proxy. HTTP(S) proxies
+            # rely on CONNECT resolving hostnames at the proxy side, which most
+            # commercial providers do, but the guarantee is weaker.
+            proxy_lower = proxy_server.lower()
+            is_socks5 = proxy_lower.startswith(('socks5://', 'socks://'))
+            is_http_proxy = proxy_lower.startswith(('http://', 'https://'))
+            if not is_socks5:
+                if is_http_proxy:
+                    logger.warning(
+                        "Proxy is HTTP/HTTPS — DNS will be handled by proxy via CONNECT. "
+                        "For strongest DNS-leak prevention, use SOCKS5 with remote DNS."
+                    )
+                else:
+                    logger.warning(
+                        f"Proxy scheme not recognised ({proxy_server[:20]}...); "
+                        "DNS routing cannot be guaranteed. Use socks5:// if possible."
+                    )
+
+            _rtc_prefs.update(_dns_via_proxy_prefs(is_socks5=is_socks5))
+
+            # HTTP proxy: ensure Firefox treats it as manual proxy (not PAC)
+            if is_http_proxy:
+                _rtc_prefs['network.proxy.type'] = 1
+        else:
+            # No proxy — DNS strategy picked from SessionConfig.dns_strategy.
+            # "doh" (default): Cloudflare DoH — bypasses ISP DNS censorship
+            #                  (VN ISPs block fv.pro etc.). Some detection
+            #                  sites flag this because resolver ASN ≠ IP ASN.
+            # "os":            OS resolver — matches ISP (no detection flag)
+            #                  but ISP-censored sites won't load.
+            # "auto":          Geo-adaptive (DoH only in US/CA/GB/DE/AT).
+            mode = (self.config.dns_strategy or "doh").lower()
+            geo = getattr(self, '_geo_data', None) or {}
+            country = geo.get('country', '')
+
+            use_doh: bool
+            if mode == "doh":
+                use_doh = True
+            elif mode == "os":
+                use_doh = False
+            else:  # "auto"
+                use_doh = _country_expects_doh(country)
+
+            if use_doh:
+                # Provider priority: SessionConfig.doh_provider > DOH_PROVIDERS
+                # table > profile's stored dns_config.doh. This lets a caller
+                # switch providers without editing the DB.
+                prov_name = (self.config.doh_provider or "cloudflare").lower()
+                prov = DOH_PROVIDERS.get(prov_name)
+                if prov:
+                    doh_uri = prov["uri"]
+                    bootstrap = prov["bootstrap"]
+                else:
+                    dns_cfg = self.profile.get('dns_config', {}).get('doh', {}) or {}
+                    doh_uri = dns_cfg.get('uri') or "https://cloudflare-dns.com/dns-query"
+                    bootstrap = dns_cfg.get('bootstrap_address') or "1.1.1.1"
+                _rtc_prefs.update(_dns_via_doh_prefs(doh_uri=doh_uri, bootstrap_ip=bootstrap))
+                logger.info(
+                    f"DNS: strategy={mode!r} country={country!r} provider={prov_name!r} "
+                    f"→ DoH {doh_uri} (bypasses ISP censorship)"
+                )
+            else:
+                _rtc_prefs.update(_dns_via_os_prefs())
+                logger.info(
+                    f"DNS: strategy={mode!r} country={country!r} → OS resolver "
+                    "(matches ISP ASN; ISP-censored sites will fail)"
+                )
 
         opts['firefox_user_prefs'] = _rtc_prefs
 
@@ -1075,58 +1598,29 @@ class TegufoxSession:
         }
         logger.debug(f"Viewport set to {viewport_width}x{viewport_height} (source: {'config override' if self.config.viewport_width else 'profile screen'})")
 
-        # Resolve proxy IP + timezone/geo for Playwright context overrides.
-        # Priority: manual override (SessionConfig.timezone) > ip-api lookup.
-        # Manual override is authoritative because ip-api DB can disagree with
-        # detection-site DBs (e.g. HostPapa IPs: ip-api says USA, detection
-        # sites say Lithuania).
-        if self.config.proxy:
-            import httpx
-            from urllib.parse import urlparse
+        # Use the geolocation probed in _resolve_exit_ip_geo (language override
+        # already applied to profile there; here we only wire Playwright options).
+        geo_data: Dict[str, Any] = getattr(self, "_geo_data", None) or {}
+        manual_tz = self.config.timezone
 
-            proxy = self.config.proxy
-            parsed = urlparse(proxy.get("server", ""))
-            user = proxy.get("username", "")
-            pwd = proxy.get("password", "")
-            if user and pwd:
-                proxy_url = f"{parsed.scheme}://{user}:{pwd}@{parsed.hostname}:{parsed.port}"
-            else:
-                proxy_url = proxy.get("server", "")
+        tz = manual_tz or geo_data.get("timezone")
+        if tz:
+            options["timezone_id"] = tz
+            self.profile['timezone'] = tz
+            source = "manual override" if manual_tz else "ip-api"
+            logger.info(f"Context timezone set from {source}: {tz}")
+            if geo_data.get("offset") is not None and not manual_tz:
+                self.profile['timezoneOffset'] = geo_data["offset"] // 60
 
-            manual_tz = self.config.timezone
-            api_data = {}
-            try:
-                with httpx.Client(proxy=proxy_url, timeout=5.0) as client:
-                    resp = client.get("http://ip-api.com/json?fields=query,timezone,lat,lon,offset")
-                    api_data = resp.json()
-            except Exception as e:
-                logger.warning(f"ip-api lookup failed in context build: {e}")
+        if geo_data.get("lat") is not None and geo_data.get("lon") is not None:
+            options["geolocation"] = {
+                "latitude":  geo_data["lat"],
+                "longitude": geo_data["lon"],
+            }
+            options.setdefault("permissions", [])
+            if "geolocation" not in options["permissions"]:
+                options["permissions"].append("geolocation")
 
-            # Timezone — manual override wins over ip-api.
-            tz = manual_tz or api_data.get("timezone")
-            if tz:
-                options["timezone_id"] = tz
-                self.profile['timezone'] = tz
-                if manual_tz:
-                    logger.info(f"Context timezone set from manual override: {tz}")
-                else:
-                    logger.info(f"Context timezone set from ip-api: {tz}")
-                if api_data.get("offset") is not None and not manual_tz:
-                    self.profile['timezoneOffset'] = api_data["offset"] // 60
-
-            # Geolocation — use ip-api (not authoritative but best available
-            # without a manual per-proxy lat/lon field).
-            if api_data.get("lat") is not None and api_data.get("lon") is not None:
-                options["geolocation"] = {"latitude": api_data["lat"], "longitude": api_data["lon"]}
-                options.setdefault("permissions", [])
-                if "geolocation" not in options["permissions"]:
-                    options["permissions"].append("geolocation")
-
-            if api_data.get("query"):
-                self.profile.setdefault('firefox_preferences', {})
-                self.profile['webrtc_ip'] = api_data["query"]
-
-        # If no proxy or failed to resolve, use profile timezone
         if "timezone_id" not in options and "timezone" in self.profile and self.profile["timezone"]:
             options["timezone_id"] = self.profile["timezone"]
 
@@ -1139,8 +1633,15 @@ class TegufoxSession:
         elif "navigator" in self.profile:
             options["user_agent"] = self.profile["navigator"].get("userAgent", "")
 
-        # Sec-CH-UA headers for Chrome profiles — Firefox doesn't send these natively,
-        # but browserscan checks for consistency between JS userAgentData and HTTP headers.
+        # Accept-Language — build from synced navigator.language so HTTP
+        # headers match JS navigator.language (detection sites cross-check).
+        nav_lang = self.profile.get('navigator', {}).get('language', 'en-US')
+        base_lang = nav_lang.split('-')[0] if '-' in nav_lang else nav_lang
+        if base_lang != nav_lang:
+            accept_language = f"{nav_lang},{base_lang};q=0.9,en;q=0.8" if base_lang != 'en' else f"{nav_lang},{base_lang};q=0.9"
+        else:
+            accept_language = f"{nav_lang},en;q=0.9" if nav_lang != 'en' else 'en'
+
         ua = options.get("user_agent", "")
         if 'Chrome/' in ua and 'Edg' not in ua and 'OPR' not in ua:
             import re as _re
@@ -1159,8 +1660,12 @@ class TegufoxSession:
                 "Sec-CH-UA-Mobile": "?1" if is_mobile else "?0",
                 "Sec-CH-UA-Platform": f'"{platform_str}"',
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-                "Accept-Language": "en-US,en;q=0.9",
+                "Accept-Language": accept_language,
             }
+        else:
+            # Firefox / Safari — set Accept-Language so it matches JS nav.language
+            options.setdefault("extra_http_headers", {})
+            options["extra_http_headers"]["Accept-Language"] = accept_language
 
         return options
 
