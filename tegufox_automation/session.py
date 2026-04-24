@@ -57,6 +57,29 @@ from urllib.parse import urlparse
 try:
     from camoufox.sync_api import Camoufox, Browser, BrowserContext
     from camoufox.fingerprints import generate_context_fingerprint
+    # Strip window.{inner,outer}{Width,Height} from browserforge's fingerprint
+    # before it reaches CAMOU_CONFIG. Leaving them set triggers two freezes:
+    # (1) fingerprint-injection.patch pins window.*Width/Height at C++ level,
+    # (2) browser-init.patch injects CSS `.browserStack { !important; contain:size }`
+    # Both prevent the content area from reflowing when the OS window resizes
+    # (visible as black bars on height increase). Removing the keys makes
+    # MaskConfig return nullopt → Firefox falls back to real dynamic values.
+    import camoufox.utils as _cf_utils
+    import camoufox.fingerprints as _cf_fp
+    _WINDOW_DIM_KEYS = (
+        'window.innerWidth', 'window.innerHeight',
+        'window.outerWidth', 'window.outerHeight',
+    )
+    def _strip_window_dims(orig):
+        def wrapper(*args, **kwargs):
+            result = orig(*args, **kwargs)
+            if isinstance(result, dict):
+                for k in _WINDOW_DIM_KEYS:
+                    result.pop(k, None)
+            return result
+        return wrapper
+    _cf_utils.from_browserforge = _strip_window_dims(_cf_utils.from_browserforge)
+    _cf_fp.from_browserforge = _strip_window_dims(_cf_fp.from_browserforge)
 except ImportError as e:
     print(f"ERROR: Camoufox not installed. Run: pip install camoufox")
     print(f"Import error details: {e}")
@@ -1439,14 +1462,17 @@ class TegufoxSession:
         if os_str and os_str != "linux":
             opts["os"] = os_str
 
-        # ── Window size ───────────────────────────────────────────────────────
-        # Skip window= for Linux (same BrowserForge constraint issue).
-        if os_str != "linux":
-            scr_section = self.profile.get("screen", {})
-            w = scr_section.get("width") or camoufox_config.get("screen.width")
-            h = scr_section.get("height") or camoufox_config.get("screen.height")
-            if w and h:
-                opts["window"] = (int(w), int(h))
+        # ── Window size: defeat the freeze ────────────────────────────────────
+        # fingerprint-injection.patch freezes window.{inner,outer}{Width,Height}
+        # at C++ level, AND browser-init.patch injects CSS with `!important` +
+        # `contain: size` on .browserStack when these keys are set — content
+        # stays fixed even when the OS window is resized (visible as black bars).
+        # The monkey-patch at the top of this module strips these 4 keys from
+        # browserforge's output before they reach CAMOU_CONFIG, so MaskConfig
+        # returns nullopt → C++ falls back to real window dims and
+        # browser-init.patch skips its CSS hijacking. Initial size is then
+        # Firefox's default (1280×1040 from browser-init.patch).
+        pass
 
         # ── Firefox preferences (DoH, WebRTC, IPv6) ───────────────────────────
         # Base: realistic WebRTC — enable host candidates (exposes LAN IP, but that's
@@ -1574,29 +1600,29 @@ class TegufoxSession:
         """Build Playwright context options (viewport, UA, timezone — applied per context)"""
         options: Dict[str, Any] = {}
 
-        # Viewport: explicit config override > profile screen > default 1280×800
+        # Viewport strategy:
+        # - Headful + no explicit override → no_viewport=True so content
+        #   resizes with the Firefox window (real-browser behavior).
+        # - Headless OR explicit viewport_width/height → fixed viewport
+        #   (nothing to resize in headless; explicit override respected).
         if self.config.viewport_width and self.config.viewport_height:
-            viewport_width = self.config.viewport_width
-            viewport_height = self.config.viewport_height
-        else:
+            options["viewport"] = {
+                "width": int(self.config.viewport_width),
+                "height": int(self.config.viewport_height),
+            }
+            logger.debug(
+                f"Viewport locked {self.config.viewport_width}x{self.config.viewport_height} (explicit override)"
+            )
+        elif self.config.headless:
             scr = self.profile.get("screen", {})
             old_cfg = self.profile.get("config", {})
-            viewport_width = (
-                scr.get("width")
-                or old_cfg.get("screen.width")
-                or 1280
-            )
-            viewport_height = (
-                scr.get("height")
-                or old_cfg.get("screen.height")
-                or 800
-            )
-
-        options["viewport"] = {
-            "width": int(viewport_width),
-            "height": int(viewport_height),
-        }
-        logger.debug(f"Viewport set to {viewport_width}x{viewport_height} (source: {'config override' if self.config.viewport_width else 'profile screen'})")
+            vw = scr.get("width") or old_cfg.get("screen.width") or 1280
+            vh = scr.get("height") or old_cfg.get("screen.height") or 800
+            options["viewport"] = {"width": int(vw), "height": int(vh)}
+            logger.debug(f"Viewport locked {vw}x{vh} (headless mode)")
+        else:
+            options["no_viewport"] = True
+            logger.debug("Viewport unlocked (no_viewport=True) — resizes with window")
 
         # Use the geolocation probed in _resolve_exit_ip_geo (language override
         # already applied to profile there; here we only wire Playwright options).
