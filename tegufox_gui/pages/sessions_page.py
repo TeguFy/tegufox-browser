@@ -457,9 +457,9 @@ class SessionsWidget(QWidget):
         lf_main.addLayout(presets_row)
         lf_main.addStretch()
 
-        launch_btn = QPushButton("▶  Launch Session")
-        launch_btn.setFixedHeight(44)
-        launch_btn.setStyleSheet(f"""
+        self.launch_btn = QPushButton("▶  Launch Session")
+        self.launch_btn.setFixedHeight(44)
+        self.launch_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: {DarkPalette.ACCENT};
                 color: white; border: none;
@@ -469,9 +469,10 @@ class SessionsWidget(QWidget):
             }}
             QPushButton:hover {{ background-color: {DarkPalette.ACCENT_HOVER}; }}
             QPushButton:pressed {{ background-color: #5b21b6; }}
+            QPushButton:disabled {{ background-color: #4c1d95; color: rgba(255,255,255,0.6); }}
         """)
-        launch_btn.clicked.connect(self._launch_session)
-        lf_main.addWidget(launch_btn)
+        self.launch_btn.clicked.connect(self._launch_session)
+        lf_main.addWidget(self.launch_btn)
         body.addWidget(launch_frame)
 
         # RIGHT: Sessions Monitor
@@ -776,6 +777,10 @@ class SessionsWidget(QWidget):
         if not profile:
             QMessageBox.warning(self, "Launch", "No profile selected.")
             return
+
+        self.launch_btn.setEnabled(False)
+        self.launch_btn.setText("⏳  Launching...")
+        QTimer.singleShot(1000, self._restore_launch_btn)
         
         # Get selected proxy (use userData if available, otherwise text)
         proxy_idx = self.proxy_combo.currentIndex()
@@ -893,10 +898,21 @@ class SessionsWidget(QWidget):
         left_section = QHBoxLayout()
         left_section.setSpacing(14)
         
-        status_dot = QLabel("●")
-        status_dot.setFixedWidth(10)
-        status_dot.setStyleSheet("color: #f9e2af; font-size: 10px; border: none;")
+        status_dot = QLabel("◐")
+        status_dot.setFixedWidth(14)
+        status_dot.setStyleSheet("color: #f9e2af; font-size: 12px; border: none;")
         left_section.addWidget(status_dot)
+
+        spinner_frames = ["◐", "◓", "◑", "◒"]
+        spinner_state = {"idx": 0}
+        spinner_timer = QTimer(self)
+
+        def _tick():
+            spinner_state["idx"] = (spinner_state["idx"] + 1) % len(spinner_frames)
+            status_dot.setText(spinner_frames[spinner_state["idx"]])
+
+        spinner_timer.timeout.connect(_tick)
+        spinner_timer.start(150)
         
         info_col = QVBoxLayout()
         info_col.setSpacing(4)
@@ -920,8 +936,8 @@ class SessionsWidget(QWidget):
         rl.addLayout(left_section, 1)
         
         # Right: Status + Actions
-        status_lbl = QLabel("starting")
-        status_lbl.setFixedWidth(64)
+        status_lbl = QLabel("opening...")
+        status_lbl.setFixedWidth(74)
         status_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         status_lbl.setStyleSheet("color: #f9e2af; font-size: 11px; font-weight: 600; border: none;")
         rl.addWidget(status_lbl)
@@ -965,12 +981,32 @@ class SessionsWidget(QWidget):
         rl.addWidget(stop_btn)
         
         self._list_layout.addWidget(row)
-        self._row_widgets[sid] = {"row": row, "status_lbl": status_lbl, "dot": status_dot}
+        self._row_widgets[sid] = {
+            "row": row,
+            "status_lbl": status_lbl,
+            "dot": status_dot,
+            "spinner_timer": spinner_timer,
+        }
         self._detail_session_id = sid
+
+    def _restore_launch_btn(self):
+        self.launch_btn.setEnabled(True)
+        self.launch_btn.setText("▶  Launch Session")
+
+    def _stop_spinner(self, sid: str):
+        entry = self._row_widgets.get(sid)
+        if not entry:
+            return
+        timer = entry.pop("spinner_timer", None)
+        if timer is not None:
+            timer.stop()
+            timer.deleteLater()
 
     def _on_status_changed(self, sid: str, status: str):
         if sid not in self._row_widgets:
             return
+        if status != "starting":
+            self._stop_spinner(sid)
         color_map = {
             "running":  "#a6e3a1",
             "error":    DarkPalette.RED,
@@ -983,12 +1019,17 @@ class SessionsWidget(QWidget):
         lbl.setText(status)
         dot = self._row_widgets[sid].get("dot")
         if dot:
-            dot.setStyleSheet(f"color: {color}; font-size: 9px;")
+            if status == "starting":
+                dot.setStyleSheet(f"color: {color}; font-size: 12px;")
+            else:
+                dot.setText("●")
+                dot.setStyleSheet(f"color: {color}; font-size: 10px;")
 
     def _poll_status(self):
         for sid, worker in list(_gui_sessions.items()):
             if sid in self._row_widgets:
-                self._row_widgets[sid]["status_lbl"].setText(worker.status)
+                text = "opening..." if worker.status == "starting" else worker.status
+                self._row_widgets[sid]["status_lbl"].setText(text)
 
     def _take_screenshot(self, sid: str):
         worker = _gui_sessions.get(sid)
@@ -1013,6 +1054,7 @@ class SessionsWidget(QWidget):
         if worker:
             worker.stop_session()
         if sid in self._row_widgets:
+            self._stop_spinner(sid)
             self._row_widgets.pop(sid)["row"].deleteLater()
         self._session_count_lbl.setText(str(len(_gui_sessions)))
         if not _gui_sessions:
