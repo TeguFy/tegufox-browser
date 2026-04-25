@@ -678,23 +678,12 @@ class TegufoxSession:
         # Launch browser via camoufox Python package
         # TEGUFOX_BINARY env var or config lets you use a custom-built binary
         import os as _os
+        from tegufox_core.binary_locator import auto_detect_binary
         _custom_bin = self.config.browser_binary or _os.environ.get('TEGUFOX_BINARY') or _os.environ.get('CAMOUFOX_BINARY')
         if not _custom_bin:
-            # Auto-detect locally built Tegufox binary
-            _project_root = Path(__file__).resolve().parent.parent  # Go up to project root
-            _candidates = [
-                # Priority 1: ./build/ directory (new location)
-                _project_root / "build" / "Tegufox.app" / "Contents" / "MacOS" / "tegufox",
-                _project_root / "build" / "Camoufox.app" / "Contents" / "MacOS" / "camoufox",
-                # Priority 2: Old location (fallback)
-                _project_root / "camoufox-source" / "camoufox-146.0.1-beta.25" / "obj-aarch64-apple-darwin" / "dist" / "Tegufox.app" / "Contents" / "MacOS" / "tegufox",
-                _project_root / "Tegufox.app" / "Contents" / "MacOS" / "tegufox",
-            ]
-            for _cand in _candidates:
-                if _cand.exists():
-                    _custom_bin = str(_cand)
-                    logger.info("Auto-detected Tegufox binary: %s", _custom_bin)
-                    break
+            _custom_bin = auto_detect_binary()
+            if _custom_bin:
+                logger.info("Auto-detected Tegufox binary: %s", _custom_bin)
         if _custom_bin:
             launch_opts['executable_path'] = _custom_bin
 

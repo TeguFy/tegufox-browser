@@ -42,10 +42,26 @@ index a7a59f9d0e..d705236963 100644
  
    return NS_OK;
 diff --git a/dom/media/webrtc/transport/third_party/nICEr/src/ice/ice_candidate.c b/dom/media/webrtc/transport/third_party/nICEr/src/ice/ice_candidate.c
-index 2146bded38..1dff0c4b3a 100644
+index 2146bded38..ba878488cc 100644
 --- a/dom/media/webrtc/transport/third_party/nICEr/src/ice/ice_candidate.c
 +++ b/dom/media/webrtc/transport/third_party/nICEr/src/ice/ice_candidate.c
-@@ -385,7 +385,15 @@ static int nr_ice_get_foundation(nr_ice_ctx *ctx,nr_ice_candidate *cand)
+@@ -119,6 +119,15 @@ int nr_ice_candidate_create(nr_ice_ctx *ctx,nr_ice_component *comp,nr_ice_socket
+     nr_ice_candidate *cand=0;
+     nr_ice_candidate *tmp=0;
+     int r,_status;
++
++    /* TEGUFOX PATCH: BLOCK NON-RELAY CANDIDATES
++     * Prevent IP leak by refusing to create any candidate that is not a "relay" (TURN).
++     */
++    if (ctype == HOST || ctype == SERVER_REFLEXIVE || ctype == PEER_REFLEXIVE) {
++        r_log(LOG_ICE, LOG_WARNING, "Tegufox: Blocked candidate type '%d' to prevent IP leak", ctype);
++        ABORT(R_NOT_FOUND); 
++    }
++
+     char label[512];
+ 
+     if(!(cand=RCALLOC(sizeof(nr_ice_candidate))))
+@@ -385,7 +394,15 @@ static int nr_ice_get_foundation(nr_ice_ctx *ctx,nr_ice_candidate *cand)
            goto next;
        }
  
@@ -62,7 +78,7 @@ index 2146bded38..1dff0c4b3a 100644
        if(!(cand->foundation=r_strdup(fnd)))
          ABORT(R_NO_MEMORY);
        return(0);
-@@ -404,7 +412,12 @@ static int nr_ice_get_foundation(nr_ice_ctx *ctx,nr_ice_candidate *cand)
+@@ -404,7 +421,12 @@ static int nr_ice_get_foundation(nr_ice_ctx *ctx,nr_ice_candidate *cand)
      }
      STAILQ_INSERT_TAIL(&ctx->foundations,foundation,entry);
  
@@ -76,7 +92,7 @@ index 2146bded38..1dff0c4b3a 100644
      if(!(cand->foundation=r_strdup(fnd)))
        ABORT(R_NO_MEMORY);
  
-@@ -550,6 +563,17 @@ int nr_ice_candidate_compute_priority(nr_ice_candidate *cand)
+@@ -550,6 +572,17 @@ int nr_ice_candidate_compute_priority(nr_ice_candidate *cand)
      assert(stun_priority < 32);
      assert(direction_priority < 8);
  

@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QFileDialog,
 )
 
+from tegufox_core.binary_locator import auto_detect_binary
 from tegufox_gui.utils.styles import DarkPalette
 
 _RULE_NAMES = [
@@ -154,7 +155,10 @@ class SettingsWidget(QWidget):
 
         gen_lay.addWidget(QLabel("Browser binary:", styleSheet=LBL), 2, 0)
         self.browser_binary_input = QLineEdit()
-        self.browser_binary_input.setPlaceholderText("Auto-detect (leave empty)")
+        _detected = auto_detect_binary()
+        self.browser_binary_input.setPlaceholderText(
+            f"Auto-detect: {_detected}" if _detected else "Auto-detect: not found"
+        )
         self.browser_binary_input.setStyleSheet(INP)
         gen_lay.addWidget(self.browser_binary_input, 2, 1)
         browse_binary_btn = QPushButton("Browse…")
@@ -164,7 +168,7 @@ class SettingsWidget(QWidget):
                 background-color: {DarkPalette.CARD};
                 color: {DarkPalette.TEXT};
                 border: 1px solid {DarkPalette.BORDER};
-                
+
                 font-size: 12px;
                 padding: 4px 12px;
             }}
@@ -172,6 +176,17 @@ class SettingsWidget(QWidget):
         """)
         browse_binary_btn.clicked.connect(self._browse_browser_binary)
         gen_lay.addWidget(browse_binary_btn, 2, 2)
+
+        # Effective-path label: shows what will actually be launched. Updates
+        # live as the user edits the input (custom path overrides auto-detect).
+        self.browser_binary_status = QLabel()
+        self.browser_binary_status.setStyleSheet(
+            f"color: {DarkPalette.TEXT_DIM}; font-size: 11px; padding: 2px 0 0 0;"
+        )
+        self.browser_binary_status.setWordWrap(True)
+        gen_lay.addWidget(self.browser_binary_status, 3, 1, 1, 2)
+        self.browser_binary_input.textChanged.connect(self._refresh_browser_binary_status)
+        self._refresh_browser_binary_status()
 
         gen_grp.setLayout(gen_lay)
         root.addWidget(gen_grp)
@@ -279,13 +294,26 @@ class SettingsWidget(QWidget):
 
     def _browse_browser_binary(self):
         file_path, _ = QFileDialog.getOpenFileName(
-            self, 
+            self,
             "Select Browser Binary",
             str(Path.cwd() / "build"),
             "Executables (tegufox camoufox);;All Files (*)"
         )
         if file_path:
             self.browser_binary_input.setText(file_path)
+
+    def _refresh_browser_binary_status(self):
+        custom = self.browser_binary_input.text().strip()
+        if custom:
+            self.browser_binary_status.setText(f"Custom path → {custom}")
+            return
+        detected = auto_detect_binary()
+        if detected:
+            self.browser_binary_status.setText(f"Auto-detected → {detected}")
+        else:
+            self.browser_binary_status.setText(
+                "Auto-detect: no built binary found. Run 'make tegufox' to build."
+            )
 
     def _load_settings(self):
         settings = copy.deepcopy(_DEFAULT_SETTINGS)

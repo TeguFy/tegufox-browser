@@ -2,11 +2,10 @@
 02-webgl-enhanced.patch
 03-audio-context-v2.patch
 04-tls-ja3-ja4.patch
-05-webrtc-ice-v2.patch
+05-webrtc-ice.patch
 06-font-metrics-v2.patch
 07-http2-settings.patch
 08-navigator-v2.patch
 09-branding.patch
-10-webrtc-block-host-ice.patch
 11-dns-force-doh.patch
 12-timezone-native-spoof.patch
