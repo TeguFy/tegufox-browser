@@ -16,11 +16,15 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QFormLayout,
     QSpinBox,
+    QRadioButton,
+    QButtonGroup,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
+import random
 
 from tegufox_gui.utils.styles import DarkPalette
-from tegufox_core.proxy_manager import ProxyManager
+from tegufox_core.proxy_manager import ProxyManager, pool_to_profile_snapshot
+from tegufox_core.profile_manager import ProfileManager
 
 
 class ProxyTestWorker(QThread):
@@ -252,6 +256,7 @@ class ProxiesWidget(QWidget):
         super().__init__(parent)
         self._all_cards = []
         self.proxy_manager = ProxyManager()
+        self.profile_manager = ProfileManager()
         self._selected_proxies = set()
         self._active_tests = {}  # proxy_name -> ProxyTestWorker
         self._setup_ui()
@@ -376,7 +381,22 @@ class ProxiesWidget(QWidget):
         self.test_selected_btn.clicked.connect(self.test_selected_proxies)
         self.test_selected_btn.setEnabled(False)
         hdr.addWidget(self.test_selected_btn)
-        
+
+        auto_assign_btn = QPushButton("⚡ Auto-Assign")
+        auto_assign_btn.setFixedHeight(32)
+        auto_assign_btn.setToolTip("Assign proxies to profiles that have none")
+        auto_assign_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: rgba(249,226,175,0.15);
+                color: #f9e2af;
+                border: 1px solid #f9e2af; border-radius: 4px;
+                padding: 4px 12px; font-size: 12px; font-weight: 600;
+            }}
+            QPushButton:hover {{ background-color: rgba(249,226,175,0.3); }}
+        """)
+        auto_assign_btn.clicked.connect(self.open_auto_assign_dialog)
+        hdr.addWidget(auto_assign_btn)
+
         refresh_btn = QPushButton("⟳")
         refresh_btn.setFixedSize(32, 32)
         refresh_btn.setToolTip("Refresh")
@@ -838,3 +858,182 @@ Notes: {data.get('notes', '—')}"""
             if card._name == proxy_name:
                 return card
         return None
+
+    def open_auto_assign_dialog(self):
+        """Open dialog to bulk-assign proxies to profiles without one."""
+        try:
+            unbound = self.profile_manager.list_profiles_without_proxy()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to read profiles: {e}")
+            return
+
+        if not unbound:
+            QMessageBox.information(
+                self, "Auto-Assign",
+                "Every profile already has a proxy assigned. Nothing to do."
+            )
+            return
+
+        all_count = len(self._all_cards)
+        sel_count = len(self._selected_proxies)
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Auto-Assign Proxies")
+        dlg.resize(440, 280)
+        dlg_layout = QVBoxLayout(dlg)
+        dlg_layout.setContentsMargins(16, 16, 16, 16)
+        dlg_layout.setSpacing(10)
+
+        target_lbl = QLabel(f"Target: {len(unbound)} profile(s) without a proxy.")
+        target_lbl.setStyleSheet(f"color: {DarkPalette.TEXT}; font-size: 12px; font-weight: 600;")
+        dlg_layout.addWidget(target_lbl)
+
+        src_lbl = QLabel("Proxy source:")
+        src_lbl.setStyleSheet(f"color: {DarkPalette.TEXT_DIM}; font-size: 11px;")
+        dlg_layout.addWidget(src_lbl)
+
+        source_group = QButtonGroup(dlg)
+        all_radio = QRadioButton(f"All proxies ({all_count} total)")
+        sel_radio = QRadioButton(f"Selected proxies only ({sel_count} selected)")
+        radio_style = f"color: {DarkPalette.TEXT}; font-size: 12px;"
+        all_radio.setStyleSheet(radio_style)
+        sel_radio.setStyleSheet(radio_style)
+        source_group.addButton(all_radio, 0)
+        source_group.addButton(sel_radio, 1)
+        if sel_count > 0:
+            sel_radio.setChecked(True)
+        else:
+            all_radio.setChecked(True)
+            sel_radio.setEnabled(False)
+        dlg_layout.addWidget(all_radio)
+        dlg_layout.addWidget(sel_radio)
+
+        warn_lbl = QLabel("")
+        warn_lbl.setStyleSheet("color: #f9e2af; font-size: 11px;")
+        warn_lbl.setWordWrap(True)
+        dlg_layout.addWidget(warn_lbl)
+
+        reuse_chk = QCheckBox("Allow re-use (same proxy for multiple profiles)")
+        reuse_chk.setStyleSheet(f"color: {DarkPalette.TEXT}; font-size: 12px;")
+        dlg_layout.addWidget(reuse_chk)
+
+        def refresh_warn():
+            available = sel_count if sel_radio.isChecked() else all_count
+            need = len(unbound)
+            if available == 0:
+                warn_lbl.setText("⚠ No proxies available in this source.")
+                reuse_chk.setEnabled(False)
+            elif available < need:
+                warn_lbl.setText(
+                    f"⚠ Only {available} proxy(ies) for {need} profile(s). "
+                    "Enable re-use to cover all profiles, or some will be skipped."
+                )
+                reuse_chk.setEnabled(True)
+            else:
+                warn_lbl.setText("")
+                reuse_chk.setEnabled(True)
+
+        all_radio.toggled.connect(lambda _=None: refresh_warn())
+        sel_radio.toggled.connect(lambda _=None: refresh_warn())
+        refresh_warn()
+
+        dlg_layout.addStretch()
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(dlg.reject)
+        btn_row.addWidget(cancel_btn)
+        assign_btn = QPushButton("Assign")
+        assign_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {DarkPalette.ACCENT}; color: white; border: none;
+                border-radius: 4px; padding: 6px 16px; font-weight: 600;
+            }}
+            QPushButton:hover {{ background-color: {DarkPalette.ACCENT_HOVER}; }}
+        """)
+        assign_btn.clicked.connect(dlg.accept)
+        btn_row.addWidget(assign_btn)
+        dlg_layout.addLayout(btn_row)
+
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        use_selected = sel_radio.isChecked()
+        allow_reuse = reuse_chk.isChecked()
+        source_names = list(self._selected_proxies) if use_selected else [c._name for c in self._all_cards]
+
+        assigned, skipped, errors = self._run_auto_assign(unbound, source_names, allow_reuse)
+
+        msg = f"Assigned {assigned} of {len(unbound)} profile(s)."
+        if skipped:
+            msg += f"\nSkipped {skipped} (no proxy available — enable re-use)."
+        if errors:
+            msg += "\n\nErrors:\n" + "\n".join(errors[:8])
+            if len(errors) > 8:
+                msg += f"\n... and {len(errors) - 8} more"
+        QMessageBox.information(self, "Auto-Assign Complete", msg)
+
+        # Refresh profiles page (if mounted) so the new badges show next time it opens.
+        profiles_list = getattr(self.window(), "profiles_list", None)
+        if profiles_list is not None:
+            try:
+                profiles_list.refresh_profiles()
+            except Exception:
+                pass
+
+    def _run_auto_assign(self, profiles_needing: list, source_names: list,
+                         allow_reuse: bool):
+        """Assign proxies from source pool to profiles. Returns (assigned, skipped, errors)."""
+        # Load proxy details and order them: active first, inactive next, drop failed.
+        loaded = []
+        for name in source_names:
+            try:
+                p = self.proxy_manager.load(name)
+            except Exception:
+                p = None
+            if not p:
+                continue
+            status = (p.get("status") or "inactive").lower()
+            if status == "failed":
+                continue
+            loaded.append(p)
+
+        random.shuffle(loaded)
+        loaded.sort(key=lambda p: 0 if (p.get("status") == "active") else 1)
+
+        if not loaded:
+            return 0, len(profiles_needing), ["No usable proxies in source (all failed or empty)."]
+
+        assigned = 0
+        skipped = 0
+        errors = []
+        cursor = 0
+        unique_used = set()
+
+        for profile_name in profiles_needing:
+            if not allow_reuse:
+                # Pick the next not-yet-used proxy.
+                pick = None
+                while cursor < len(loaded):
+                    candidate = loaded[cursor]
+                    cursor += 1
+                    if candidate["name"] not in unique_used:
+                        pick = candidate
+                        break
+                if pick is None:
+                    skipped += 1
+                    continue
+                unique_used.add(pick["name"])
+            else:
+                pick = loaded[cursor % len(loaded)]
+                cursor += 1
+
+            try:
+                snapshot = pool_to_profile_snapshot(pick)
+                self.profile_manager.assign_proxy(profile_name, snapshot)
+                assigned += 1
+            except Exception as e:
+                errors.append(f"{profile_name}: {e}")
+
+        return assigned, skipped, errors

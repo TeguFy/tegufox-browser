@@ -342,6 +342,50 @@ def _language_for_country(cc: str) -> str:
     return _COUNTRY_TO_LANGUAGE.get((cc or "").upper(), "en-US")
 
 
+# Canonical IANA timezone for single-zone countries. Multi-zone countries
+# (US, CA, RU, AU, BR, MX, ID, CN-by-region, KZ, ...) are intentionally absent
+# — for those we trust ip-api's per-IP timezone as the best signal.
+# Used to correct ip-api's occasional wrong-country-cluster TZ (e.g. it tags
+# some VN ranges as Asia/Bangkok).
+_COUNTRY_TO_TIMEZONE: Dict[str, str] = {
+    'VN': 'Asia/Ho_Chi_Minh', 'TH': 'Asia/Bangkok', 'PH': 'Asia/Manila',
+    'MY': 'Asia/Kuala_Lumpur', 'SG': 'Asia/Singapore', 'JP': 'Asia/Tokyo',
+    'KR': 'Asia/Seoul', 'TW': 'Asia/Taipei', 'HK': 'Asia/Hong_Kong',
+    'IN': 'Asia/Kolkata', 'PK': 'Asia/Karachi', 'BD': 'Asia/Dhaka',
+    'LK': 'Asia/Colombo', 'NP': 'Asia/Kathmandu', 'IR': 'Asia/Tehran',
+    'IL': 'Asia/Jerusalem', 'AE': 'Asia/Dubai', 'SA': 'Asia/Riyadh',
+    'EG': 'Africa/Cairo', 'ZA': 'Africa/Johannesburg', 'NG': 'Africa/Lagos',
+    'KE': 'Africa/Nairobi', 'MA': 'Africa/Casablanca',
+    'GB': 'Europe/London', 'IE': 'Europe/Dublin', 'FR': 'Europe/Paris',
+    'DE': 'Europe/Berlin', 'IT': 'Europe/Rome', 'ES': 'Europe/Madrid',
+    'PT': 'Europe/Lisbon', 'NL': 'Europe/Amsterdam', 'BE': 'Europe/Brussels',
+    'AT': 'Europe/Vienna', 'CH': 'Europe/Zurich', 'PL': 'Europe/Warsaw',
+    'CZ': 'Europe/Prague', 'SK': 'Europe/Bratislava', 'HU': 'Europe/Budapest',
+    'RO': 'Europe/Bucharest', 'GR': 'Europe/Athens', 'BG': 'Europe/Sofia',
+    'HR': 'Europe/Zagreb', 'RS': 'Europe/Belgrade', 'SE': 'Europe/Stockholm',
+    'NO': 'Europe/Oslo', 'DK': 'Europe/Copenhagen', 'FI': 'Europe/Helsinki',
+    'IS': 'Atlantic/Reykjavik', 'EE': 'Europe/Tallinn', 'LV': 'Europe/Riga',
+    'LT': 'Europe/Vilnius', 'UA': 'Europe/Kyiv', 'BY': 'Europe/Minsk',
+    'TR': 'Europe/Istanbul', 'NZ': 'Pacific/Auckland',
+    'AR': 'America/Argentina/Buenos_Aires', 'CL': 'America/Santiago',
+    'CO': 'America/Bogota', 'PE': 'America/Lima', 'VE': 'America/Caracas',
+}
+
+
+def _canonical_timezone_for(country: str, ip_api_tz: Optional[str]) -> Optional[str]:
+    """If country is single-TZ and ip-api disagrees, return canonical. Else
+    return the ip-api value (or None).
+    """
+    canonical = _COUNTRY_TO_TIMEZONE.get((country or "").upper())
+    if canonical and ip_api_tz and ip_api_tz != canonical:
+        logger.warning(
+            f"ip-api timezone '{ip_api_tz}' disagrees with country {country} "
+            f"canonical '{canonical}' — using canonical"
+        )
+        return canonical
+    return canonical or ip_api_tz
+
+
 def lookup_ip_geo(proxy_url: Optional[str] = None, timeout: float = 5.0) -> Dict[str, Any]:
     """Probe ip-api.com for exit-IP metadata (country, timezone, lat/lon).
 
@@ -1629,11 +1673,16 @@ class TegufoxSession:
         geo_data: Dict[str, Any] = getattr(self, "_geo_data", None) or {}
         manual_tz = self.config.timezone
 
-        tz = manual_tz or geo_data.get("timezone")
+        if manual_tz:
+            tz = manual_tz
+            source = "manual override"
+        else:
+            tz = _canonical_timezone_for(geo_data.get("country", ""), geo_data.get("timezone"))
+            source = "ip-api+canonical" if tz and tz != geo_data.get("timezone") else "ip-api"
+
         if tz:
             options["timezone_id"] = tz
             self.profile['timezone'] = tz
-            source = "manual override" if manual_tz else "ip-api"
             logger.info(f"Context timezone set from {source}: {tz}")
             if geo_data.get("offset") is not None and not manual_tz:
                 self.profile['timezoneOffset'] = geo_data["offset"] // 60

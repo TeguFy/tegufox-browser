@@ -759,6 +759,48 @@ class ProfileManager:
         """Check if profile exists in database"""
         return self.db.profile_exists(name)
 
+    # Proxy assignment
+
+    def assign_proxy(
+        self, name: str, proxy: Optional[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Attach a proxy snapshot to the profile, or detach when proxy is None.
+
+        Args:
+            name: Profile name
+            proxy: Dict with server/username/password/proxy_name, or None to clear
+
+        Returns:
+            Updated profile dict
+        """
+        profile = self.load(name)
+        if proxy:
+            snapshot = {"server": proxy["server"]}
+            if proxy.get("username"):
+                snapshot["username"] = proxy["username"]
+            if proxy.get("password"):
+                snapshot["password"] = proxy["password"]
+            if proxy.get("proxy_name"):
+                snapshot["proxy_name"] = proxy["proxy_name"]
+            profile["proxy"] = snapshot
+        else:
+            profile.pop("proxy", None)
+        self.save(profile, name)
+        return profile
+
+    def get_proxy(self, name: str) -> Optional[Dict[str, Any]]:
+        """Return the proxy snapshot bound to a profile, or None."""
+        profile = self.load(name)
+        return profile.get("proxy")
+
+    def list_profiles_without_proxy(self) -> List[str]:
+        """Profile names that have no proxy assigned."""
+        unbound = []
+        for p in self.db.get_all_profiles():
+            if not p.get("proxy"):
+                unbound.append(p["name"])
+        return sorted(unbound)
+
     # Validation
 
     def validate(

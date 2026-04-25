@@ -33,6 +33,7 @@ class ProfileCard(QFrame):
     launch_requested = pyqtSignal(str)
     stop_requested = pyqtSignal(str)
     selection_changed = pyqtSignal(str, bool)  # profile_name, is_selected
+    assign_proxy_requested = pyqtSignal(str)
 
     def __init__(self, profile_data: dict, parent=None):
         super().__init__(parent)
@@ -101,6 +102,20 @@ class ProfileCard(QFrame):
         plat_lbl.setStyleSheet(f"color: {DarkPalette.TEXT_DIM}; font-size: 11px;")
         row.addWidget(plat_lbl)
 
+        proxy_info = self.profile_data.get("proxy") or {}
+        proxy_name = proxy_info.get("proxy_name") or ("custom" if proxy_info else "")
+        self.proxy_lbl = QLabel(proxy_name or "—")
+        self.proxy_lbl.setFixedWidth(110)
+        self.proxy_lbl.setToolTip(proxy_info.get("server", "") if proxy_info else "No proxy assigned")
+        if proxy_name:
+            self.proxy_lbl.setStyleSheet(
+                "color: #a6e3a1; font-size: 11px; font-weight: 600;"
+                " background-color: rgba(166,227,161,0.12); padding: 3px 6px;"
+            )
+        else:
+            self.proxy_lbl.setStyleSheet(f"color: {DarkPalette.TEXT_DIM}; font-size: 11px;")
+        row.addWidget(self.proxy_lbl)
+
         created = self.profile_data.get("created", "")
         date_str = "—"
         if created:
@@ -131,6 +146,24 @@ class ProfileCard(QFrame):
         """)
         self.launch_btn.clicked.connect(self._on_launch_clicked)
         row.addWidget(self.launch_btn)
+
+        self.proxy_btn = QPushButton("🌐")
+        self.proxy_btn.setFixedSize(32, 32)
+        self.proxy_btn.setToolTip("Assign Proxy")
+        self.proxy_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {DarkPalette.CARD};
+                color: {DarkPalette.TEXT}; border: 1px solid {DarkPalette.BORDER};
+                border-radius: 4px; font-size: 13px;
+            }}
+            QPushButton:hover {{ background-color: {DarkPalette.HOVER}; }}
+            QPushButton:disabled {{
+                background-color: {DarkPalette.CARD};
+                color: {DarkPalette.TEXT_DIM};
+            }}
+        """)
+        self.proxy_btn.clicked.connect(lambda: self.assign_proxy_requested.emit(self._name))
+        row.addWidget(self.proxy_btn)
 
         self.del_btn = QPushButton("✕")
         self.del_btn.setFixedSize(32, 32)
@@ -213,6 +246,24 @@ class ProfileCard(QFrame):
     def get_status(self) -> str:
         """Get current profile status"""
         return self._status
+
+    def update_proxy(self, proxy_info: dict | None):
+        """Refresh the proxy badge after an assignment change."""
+        self.profile_data["proxy"] = proxy_info or None
+        if not proxy_info:
+            self.profile_data.pop("proxy", None)
+        proxy_name = (proxy_info or {}).get("proxy_name") or ("custom" if proxy_info else "")
+        self.proxy_lbl.setText(proxy_name or "—")
+        self.proxy_lbl.setToolTip(
+            (proxy_info or {}).get("server", "") if proxy_info else "No proxy assigned"
+        )
+        if proxy_name:
+            self.proxy_lbl.setStyleSheet(
+                "color: #a6e3a1; font-size: 11px; font-weight: 600;"
+                " background-color: rgba(166,227,161,0.12); padding: 3px 6px;"
+            )
+        else:
+            self.proxy_lbl.setStyleSheet(f"color: {DarkPalette.TEXT_DIM}; font-size: 11px;")
 
     def set_selected(self, selected: bool):
         """Set selection state programmatically"""

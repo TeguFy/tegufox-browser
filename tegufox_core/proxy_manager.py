@@ -129,10 +129,10 @@ def parse_proxy_line(line: str) -> Optional[Dict[str, Any]]:
 def format_proxy_url(proxy_dict: Dict[str, Any]) -> str:
     """
     Convert proxy dict to URL format
-    
+
     Args:
         proxy_dict: Dict with host, port, username, password, protocol
-    
+
     Returns:
         Proxy URL string (e.g., http://user:pass@host:port)
     """
@@ -141,10 +141,28 @@ def format_proxy_url(proxy_dict: Dict[str, Any]) -> str:
     port = proxy_dict["port"]
     username = proxy_dict.get("username")
     password = proxy_dict.get("password")
-    
+
     if username and password:
         return f"{protocol}://{username}:{password}@{host}:{port}"
     return f"{protocol}://{host}:{port}"
+
+
+def pool_to_profile_snapshot(pool: Dict[str, Any]) -> Dict[str, Any]:
+    """Build the profile-side proxy snapshot from a ProxyPool dict.
+
+    The `server` URL has no embedded credentials — Camoufox/Playwright take
+    `username`/`password` as separate fields.
+    """
+    protocol = pool.get("protocol", "http")
+    snap: Dict[str, Any] = {
+        "server": f"{protocol}://{pool['host']}:{pool['port']}",
+        "proxy_name": pool["name"],
+    }
+    if pool.get("username"):
+        snap["username"] = pool["username"]
+    if pool.get("password"):
+        snap["password"] = pool["password"]
+    return snap
 
 
 class ProxyManager:

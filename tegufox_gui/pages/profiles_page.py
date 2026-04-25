@@ -27,6 +27,7 @@ import queue
 from tegufox_gui.utils.styles import DarkPalette
 from tegufox_gui.components import ProfileCard
 from tegufox_core.profile_manager import ProfileManager
+from tegufox_core.proxy_manager import ProxyManager, pool_to_profile_snapshot
 
 
 class BrowserSessionWorker(QThread):
@@ -34,17 +35,27 @@ class BrowserSessionWorker(QThread):
     
     status_changed = pyqtSignal(str, str)  # profile_name, status
     
-    def __init__(self, profile_name: str, parent=None):
+    def __init__(self, profile_name: str, proxy: dict | None = None, parent=None):
         super().__init__(parent)
         self.profile_name = profile_name
+        self._proxy = proxy
         self._stop_requested = False
-        
+
     def run(self):
         """Launch browser and wait for it to close"""
         try:
             self.status_changed.emit(self.profile_name, "active")
-            
+
             cwd = str(Path.cwd())
+            # Camoufox/Playwright takes server URL + separate username/password.
+            proxy_arg = None
+            if self._proxy and self._proxy.get("server"):
+                proxy_arg = {"server": self._proxy["server"]}
+                if self._proxy.get("username"):
+                    proxy_arg["username"] = self._proxy["username"]
+                if self._proxy.get("password"):
+                    proxy_arg["password"] = self._proxy["password"]
+
             script_lines = [
                 "import sys, time, warnings, logging",
                 "logging.basicConfig(level=logging.DEBUG, format='%(name)s %(levelname)s %(message)s')",
@@ -52,8 +63,9 @@ class BrowserSessionWorker(QThread):
                 f"sys.path.insert(0, {repr(cwd)})",
                 "from tegufox_automation import TegufoxSession, SessionConfig",
                 f"profile_name = {repr(self.profile_name)}",
+                f"proxy = {repr(proxy_arg)}",
                 "try:",
-                "    with TegufoxSession(profile_name, config=SessionConfig(headless=False)) as sess:",
+                "    with TegufoxSession(profile_name, config=SessionConfig(headless=False, proxy=proxy)) as sess:",
                 "        sess.page.goto('https://www.browserscan.net/bot-detection')",
                 "        while True:",
                 "            try: sess.page.title(); time.sleep(1)",
@@ -104,6 +116,7 @@ class ProfilesListWidget(QWidget):
         self._all_cards: list = []
         self._main_window = None  # Will be set by main window
         self.profile_manager = ProfileManager()
+        self.proxy_manager = ProxyManager()
         self._selected_profiles = set()  # Track selected profile names
         self._active_sessions = {}  # profile_name -> BrowserSessionWorker
         self._setup_ui()
@@ -252,7 +265,7 @@ class ProfilesListWidget(QWidget):
         
         for txt, w, stretch in [
             ("BROWSER", 120, 0), ("NAME", 0, 1), ("PLATFORM", 68, 0),
-            ("CREATED", 90, 0), ("", 76, 0),
+            ("PROXY", 110, 0), ("CREATED", 90, 0), ("", 108, 0),
         ]:
             lbl = QLabel(txt)
             lbl.setStyleSheet(COL_STYLE)
@@ -295,6 +308,7 @@ class ProfilesListWidget(QWidget):
                     card.launch_requested.connect(self.on_profile_launch)
                     card.stop_requested.connect(self.on_profile_stop)
                     card.selection_changed.connect(self.on_selection_changed)
+                    card.assign_proxy_requested.connect(self.on_assign_proxy)
                     self._all_cards.append(card)
                 except Exception as e:
                     print(f"[ProfilesList] Error loading profile {name}: {e}")
@@ -502,17 +516,17 @@ class ProfilesListWidget(QWidget):
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to load profile: {e}")
             return
-        
+
         # Find the card and set it to loading
         card = self._find_card(profile_name)
         if card:
             card.set_status("loading")
-        
-        # Create and start worker thread
-        worker = BrowserSessionWorker(profile_name)
+
+        proxy = data.get("proxy") or None
+        worker = BrowserSessionWorker(profile_name, proxy=proxy)
         worker.status_changed.connect(self._on_session_status_changed)
         worker.start()
-        
+
         self._active_sessions[profile_name] = worker
     
     def on_profile_stop(self, profile_name):
@@ -539,3 +553,104 @@ class ProfilesListWidget(QWidget):
             if card._name == profile_name:
                 return card
         return None
+
+    def on_assign_proxy(self, profile_name: str):
+        """Open dialog to assign / change / clear the profile's proxy."""
+        try:
+            current = self.profile_manager.get_proxy(profile_name) or {}
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load profile: {e}")
+            return
+
+        try:
+            pool_names = self.proxy_manager.list()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load proxies: {e}")
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Assign Proxy — {profile_name}")
+        dlg.resize(460, 220)
+        dlg_layout = QVBoxLayout(dlg)
+        dlg_layout.setContentsMargins(16, 16, 16, 16)
+        dlg_layout.setSpacing(10)
+
+        current_lbl = QLabel(_format_current_proxy(current))
+        current_lbl.setStyleSheet(f"color: {DarkPalette.TEXT}; font-size: 12px;")
+        dlg_layout.addWidget(current_lbl)
+
+        pick_lbl = QLabel("Change to:")
+        pick_lbl.setStyleSheet(f"color: {DarkPalette.TEXT_DIM}; font-size: 11px;")
+        dlg_layout.addWidget(pick_lbl)
+
+        combo = QComboBox()
+        combo.addItem("— None —", userData=None)
+        for n in pool_names:
+            combo.addItem(n, userData=n)
+        cur_name = current.get("proxy_name")
+        if cur_name and cur_name in pool_names:
+            idx = combo.findData(cur_name)
+            if idx >= 0:
+                combo.setCurrentIndex(idx)
+        combo.setStyleSheet(f"""
+            QComboBox {{
+                background-color: {DarkPalette.CARD}; color: {DarkPalette.TEXT};
+                border: 1px solid {DarkPalette.BORDER}; border-radius: 4px;
+                padding: 6px 10px; font-size: 12px;
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: {DarkPalette.CARD}; color: {DarkPalette.TEXT};
+                selection-background-color: {DarkPalette.ACCENT};
+            }}
+        """)
+        dlg_layout.addWidget(combo)
+
+        dlg_layout.addStretch()
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(dlg.reject)
+        btn_row.addWidget(cancel_btn)
+        save_btn = QPushButton("Save")
+        save_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {DarkPalette.ACCENT}; color: white; border: none;
+                border-radius: 4px; padding: 6px 16px; font-weight: 600;
+            }}
+            QPushButton:hover {{ background-color: {DarkPalette.ACCENT_HOVER}; }}
+        """)
+        save_btn.clicked.connect(dlg.accept)
+        btn_row.addWidget(save_btn)
+        dlg_layout.addLayout(btn_row)
+
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        chosen = combo.currentData()
+        try:
+            if chosen is None:
+                self.profile_manager.assign_proxy(profile_name, None)
+                snapshot = None
+            else:
+                pool = self.proxy_manager.load(chosen)
+                if not pool:
+                    QMessageBox.warning(self, "Error", f"Proxy not found: {chosen}")
+                    return
+                snapshot = pool_to_profile_snapshot(pool)
+                self.profile_manager.assign_proxy(profile_name, snapshot)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to assign proxy: {e}")
+            return
+
+        card = self._find_card(profile_name)
+        if card:
+            card.update_proxy(snapshot)
+
+
+def _format_current_proxy(current: dict) -> str:
+    if not current:
+        return "Current: — none —"
+    name = current.get("proxy_name") or "(unnamed)"
+    server = current.get("server", "")
+    return f"Current: {name}  ({server})"

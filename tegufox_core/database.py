@@ -22,6 +22,7 @@ from sqlalchemy import (
     Text,
     DateTime,
     ForeignKey,
+    text,
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship, Session
@@ -353,6 +354,7 @@ class Proxy(Base):
     server = Column(String(255))
     username = Column(String(255))
     password = Column(String(255))
+    proxy_name = Column(String(255))
 
     profile = relationship("Profile", back_populates="proxy")
 
@@ -362,6 +364,8 @@ class Proxy(Base):
             result["username"] = self.username
         if self.password:
             result["password"] = self.password
+        if self.proxy_name:
+            result["proxy_name"] = self.proxy_name
         return result
 
 
@@ -381,7 +385,15 @@ class ProfileDatabase:
         self.db_path = db_path
         self.engine = create_engine(f"sqlite:///{db_path}", echo=False)
         Base.metadata.create_all(self.engine)
+        self._migrate_schema()
         self.SessionLocal = sessionmaker(bind=self.engine)
+
+    def _migrate_schema(self) -> None:
+        """In-place ALTER for columns added after initial release."""
+        with self.engine.begin() as conn:
+            cols = {row[1] for row in conn.execute(text("PRAGMA table_info(proxies)"))}
+            if "proxy_name" not in cols:
+                conn.execute(text("ALTER TABLE proxies ADD COLUMN proxy_name VARCHAR(255)"))
 
     def get_session(self) -> Session:
         """Get database session"""
@@ -519,6 +531,7 @@ class ProfileDatabase:
                     server=p.get("server"),
                     username=p.get("username"),
                     password=p.get("password"),
+                    proxy_name=p.get("proxy_name"),
                 )
 
             session.add(profile)
