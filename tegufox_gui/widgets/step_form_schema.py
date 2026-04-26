@@ -88,6 +88,7 @@ STEP_FORM: dict = {
         Field("key", "string", required=True, placeholder="Enter"),
         Field("selector", "string", placeholder="(optional) focus this first"),
     ],
+    "browser.disable_popups": [],
     "browser.click_and_wait_popup": [
         Field("selector", "string", required=True,
               placeholder="selector that triggers window.open"),

@@ -161,6 +161,49 @@ def _all_pages_across_contexts(main_page) -> list:
     return pages
 
 
+@register("browser.disable_popups")
+def _disable_popups(spec: StepSpec, ctx) -> None:
+    """Override window.open so popups become same-tab redirects.
+
+    Useful when Camoufox isolates popup windows in a browser process
+    Playwright can't reach. Once disabled, any window.open(url) call
+    navigates the CURRENT page to that URL instead of opening a new
+    window — which Playwright tracks naturally.
+
+    Trade-off: the original tab's content is lost when redirected.
+    For OAuth flows this is fine because the auth provider redirects
+    back to the originating site after success, restoring the user
+    on the original origin (different page, but same browser tab).
+
+    Applied via context.add_init_script() so it persists across all
+    navigations and any new pages opened in this context. Also
+    applied immediately to ctx.page via evaluate() so it takes
+    effect on the page that's already loaded.
+    """
+    js = """
+    (() => {
+      if (window.__teguPopupsDisabled) return;
+      window.__teguPopupsDisabled = true;
+      const origOpen = window.open;
+      window.open = function(url, name, features) {
+        if (typeof url === 'string' && url.length > 0) {
+          window.location.href = url;
+        }
+        return window;
+      };
+    })();
+    """
+    try:
+        ctx.page.context.add_init_script(js)
+    except Exception as e:
+        ctx.logger.warning(f"add_init_script failed: {e}")
+    try:
+        ctx.page.evaluate(js)
+    except Exception as e:
+        ctx.logger.warning(f"page.evaluate failed: {e}")
+    ctx.logger.info("popups disabled — window.open now redirects current tab")
+
+
 @register("browser.click_and_wait_popup", required=("selector",))
 def _click_and_wait_popup(spec: StepSpec, ctx) -> None:
     """Atomic click + popup capture.

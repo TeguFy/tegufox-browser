@@ -32,6 +32,15 @@ defaults:
 
 steps:
   # -----------------------------------------------------------------
+  # Step 0: kill window.open so OAuth runs in the SAME tab.
+  # Camoufox/firefox-115 isolates popup windows in a process Playwright
+  # can't reach; redirecting the current tab is the only reliable way
+  # to keep automation in control of the auth flow.
+  # -----------------------------------------------------------------
+  - id: disable_popups
+    type: browser.disable_popups
+
+  # -----------------------------------------------------------------
   # Step 1: open x.com and click "Sign in"
   # -----------------------------------------------------------------
   - id: open_home
@@ -39,6 +48,11 @@ steps:
     url: "https://x.com/"
     wait_until: load
     timeout_ms: 30000
+
+  - id: re_disable_popups
+    type: browser.disable_popups
+    # init_script applies to NEW pages — but the page we just navigated
+    # via goto IS new in that sense, so re-arm to be safe.
 
   - id: wait_signin_btn
     type: browser.wait_for
@@ -186,8 +200,9 @@ steps:
     type: control.sleep
     ms: 6000
 
-  - id: back_to_main
-    type: browser.switch_to_main
+  # No switch_to_main needed: with popups disabled, the whole OAuth
+  # flow happened in the main tab, and after Google redirects back
+  # we're already on x.com.
 
   # -----------------------------------------------------------------
   # Step 7: confirm we landed on the timeline + save screenshot
