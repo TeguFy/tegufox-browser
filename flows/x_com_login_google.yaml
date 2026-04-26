@@ -48,6 +48,7 @@ steps:
   - id: click_signin
     type: browser.click
     selector: 'a[href="/login"], a[data-testid="loginButton"]'
+    human: false
 
   # -----------------------------------------------------------------
   # Step 2: on /login, click "Sign in with Google"
