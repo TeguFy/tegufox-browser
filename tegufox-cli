@@ -27,6 +27,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 def main():
+    # Delegate `flow` subcommand to tegufox_flow.cli (it has its own argparse)
+    if len(sys.argv) > 1 and sys.argv[1] == "flow":
+        from tegufox_flow.cli import run_cli
+        sys.exit(run_cli(sys.argv[2:]))
+
     import argparse
     from tegufox_core import ProfileManager, generate_fleet
     
