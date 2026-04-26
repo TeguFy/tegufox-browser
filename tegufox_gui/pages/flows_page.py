@@ -148,12 +148,30 @@ class FlowsPage(QWidget):
         finally:
             s.close()
 
+        # Collect inputs via a generated form so the engine doesn't reject
+        # the run with missing required input.
+        inputs: dict = {}
+        try:
+            import yaml as _yaml
+            from tegufox_flow.dsl import parse_flow
+            flow = parse_flow(_yaml.safe_load(yaml_text))
+        except Exception as e:
+            QMessageBox.critical(self, "Cannot parse flow", str(e))
+            return
+
+        if flow.inputs:
+            from tegufox_gui.dialogs.run_inputs_dialog import RunInputsDialog
+            dlg = RunInputsDialog(flow.name, flow.inputs, parent=self)
+            if not dlg.exec():
+                return
+            inputs = dlg.values()
+
         import tempfile
         with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
             f.write(yaml_text)
             tmp = Path(f.name)
 
-        worker = _RunWorker(tmp, profile, {})
+        worker = _RunWorker(tmp, profile, inputs)
         worker.finished_with.connect(self._on_run_done)
         self._workers.append(worker)
         self.log.append(f"Starting {item.text()} on {profile}…")
