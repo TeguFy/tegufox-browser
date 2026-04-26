@@ -129,14 +129,40 @@ def _type(spec: StepSpec, ctx) -> None:
     _native_type(ctx, sel, text, p)
 
 
+def _all_pages_across_contexts(main_page) -> list:
+    """Return every Page across every BrowserContext of the underlying
+    browser. Camoufox/Firefox sometimes opens OAuth in a fresh window
+    that lives in a *separate* context (not just a new page in the
+    current context), so iterating only `main.context.pages` misses it.
+    """
+    pages: list = []
+    seen: set = set()
+    try:
+        ctx0 = main_page.context
+        pages_list = list(ctx0.pages)
+        for p in pages_list:
+            if id(p) not in seen:
+                seen.add(id(p)); pages.append(p)
+        # Walk sibling contexts via the shared Browser object.
+        try:
+            browser = ctx0.browser
+            if browser is not None:
+                for c in browser.contexts:
+                    for p in c.pages:
+                        if id(p) not in seen:
+                            seen.add(id(p)); pages.append(p)
+        except Exception:
+            pass
+    except Exception:
+        pages = [main_page]
+    return pages
+
+
 @register("browser.wait_for_popup", optional=("url_contains", "timeout_ms"))
 def _wait_for_popup(spec: StepSpec, ctx) -> None:
-    """Wait until a new page (popup / new tab) opens in the browser context
-    and switch ctx.page to it. Common case: site opens 'Login with Google'
-    and the rest of the auth flow runs in the popup.
-
-    Optional `url_contains`: a substring filter so we ignore unrelated
-    iframes/popups. If multiple popups match, picks the first.
+    """Wait until a new page (popup / tab / window) opens and switch ctx.page
+    to it. Scans pages across all browser contexts, so it catches OAuth
+    flows that open a separate Firefox window with its own context.
     """
     import time
     p = spec.params
@@ -145,58 +171,40 @@ def _wait_for_popup(spec: StepSpec, ctx) -> None:
 
     main = ctx._original_page or ctx.page
     deadline = time.monotonic() + timeout_ms / 1000.0
-    seen_initial = set()
-    try:
-        for pg in main.context.pages:
-            seen_initial.add(id(pg))
-    except Exception:
-        pass
+    seen_initial = {id(pg) for pg in _all_pages_across_contexts(main)}
 
     while time.monotonic() < deadline:
-        try:
-            for pg in main.context.pages:
-                if pg is main:
-                    continue
-                if id(pg) in seen_initial:
-                    continue   # was already open before this step ran
+        for pg in _all_pages_across_contexts(main):
+            if pg is main or id(pg) in seen_initial:
+                continue
+            try:
                 url = pg.url or ""
-                if needle and needle not in url:
-                    continue
-                ctx.page = pg
-                # Re-bind HumanMouse/Keyboard to the popup so subsequent
-                # human=True clicks/typing target it.
-                try:
-                    from tegufox_automation import HumanMouse, HumanKeyboard
-                    if HumanMouse: ctx._human_mouse = HumanMouse(pg)
-                    if HumanKeyboard: ctx._human_keyboard = HumanKeyboard(pg)
-                except Exception:
-                    pass
-                ctx.logger.info(f"switched to popup: {url}")
-                return
-        except Exception:
-            pass
+            except Exception:
+                continue
+            if needle and needle not in url:
+                continue
+            ctx.page = pg
+            try:
+                from tegufox_automation import HumanMouse, HumanKeyboard
+                if HumanMouse: ctx._human_mouse = HumanMouse(pg)
+                if HumanKeyboard: ctx._human_keyboard = HumanKeyboard(pg)
+            except Exception:
+                pass
+            ctx.logger.info(f"switched to popup/window: {url}")
+            return
         time.sleep(0.2)
 
     raise RuntimeError(
-        f"no popup opened within {timeout_ms}ms"
+        f"no popup/window opened within {timeout_ms}ms"
         + (f" matching {needle!r}" if needle else "")
     )
 
 
 @register("browser.wait_for_url", optional=("url_contains", "timeout_ms"))
 def _wait_for_url(spec: StepSpec, ctx) -> None:
-    """Wait until any page in the browser context has a URL matching
-    `url_contains` and switch ctx.page to it. Unlike wait_for_popup, this
-    handles both:
-
-      * **same-tab navigation** — site redirects the main page to the
-        target URL (common with modern OAuth: x.com Sign-in-with-Google
-        often redirects in place).
-      * **popup-based flows** — site opens window.open(...) and the OAuth
-        screen loads in a new page.
-
-    If `url_contains` is empty, the step succeeds as soon as any page
-    finishes navigating (useful as a generic 'wait for SPA route change').
+    """Wait until any page (across ALL browser contexts) has a URL matching
+    `url_contains` and switch ctx.page to it. Handles same-tab redirect,
+    popups, and Camoufox-style separate-context windows.
     """
     import time
     p = spec.params
@@ -207,27 +215,27 @@ def _wait_for_url(spec: StepSpec, ctx) -> None:
     deadline = time.monotonic() + timeout_ms / 1000.0
 
     while time.monotonic() < deadline:
-        try:
-            for pg in main.context.pages:
+        for pg in _all_pages_across_contexts(main):
+            try:
                 url = pg.url or ""
-                if needle and needle not in url:
-                    continue
-                if not needle and not url:
-                    continue   # skip about:blank when no filter
-                if pg is not ctx.page:
-                    ctx.page = pg
-                    try:
-                        from tegufox_automation import HumanMouse, HumanKeyboard
-                        if HumanMouse: ctx._human_mouse = HumanMouse(pg)
-                        if HumanKeyboard: ctx._human_keyboard = HumanKeyboard(pg)
-                    except Exception:
-                        pass
-                    ctx.logger.info(f"switched to page: {url}")
-                else:
-                    ctx.logger.info(f"already on matching page: {url}")
-                return
-        except Exception:
-            pass
+            except Exception:
+                continue
+            if needle and needle not in url:
+                continue
+            if not needle and not url:
+                continue
+            if pg is not ctx.page:
+                ctx.page = pg
+                try:
+                    from tegufox_automation import HumanMouse, HumanKeyboard
+                    if HumanMouse: ctx._human_mouse = HumanMouse(pg)
+                    if HumanKeyboard: ctx._human_keyboard = HumanKeyboard(pg)
+                except Exception:
+                    pass
+                ctx.logger.info(f"switched to page: {url}")
+            else:
+                ctx.logger.info(f"already on matching page: {url}")
+            return
         time.sleep(0.2)
 
     raise RuntimeError(
