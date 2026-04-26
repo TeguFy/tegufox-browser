@@ -37,6 +37,24 @@ def build_parser() -> argparse.ArgumentParser:
     show = runs_sub.add_parser("show")
     show.add_argument("run_id")
 
+    batch = sub.add_parser("batch", help="Run a flow against N profiles")
+    batch_sub = batch.add_subparsers(dest="batch_cmd", required=True)
+
+    bb = batch_sub.add_parser("run")
+    bb.add_argument("path")
+    bb.add_argument("--profiles", required=True,
+                    help="comma-separated profile names")
+    bb.add_argument("--inputs", nargs="*", default=[])
+    bb.add_argument("--max-concurrent", type=int, default=3, dest="max_concurrent")
+    bb.add_argument("--fail-fast", action="store_true", dest="fail_fast")
+    bb.add_argument("--db", default="data/tegufox.db")
+
+    bls = batch_sub.add_parser("ls")
+    bls.add_argument("--limit", type=int, default=20)
+
+    bsh = batch_sub.add_parser("show")
+    bsh.add_argument("batch_id")
+
     return p
 
 
@@ -51,6 +69,86 @@ def _parse_inputs(items: List[str]) -> dict:
         except json.JSONDecodeError:
             out[k] = v
     return out
+
+
+def _run_batch(flow_path, db_path, profiles, inputs, max_concurrent, fail_fast):
+    from .orchestrator import Orchestrator
+    orch = Orchestrator(
+        flow_path=flow_path, db_path=db_path,
+        max_concurrent=max_concurrent, fail_fast=fail_fast,
+    )
+    return orch.run(profiles=profiles, inputs=inputs)
+
+
+def _batch_cmd(args) -> int:
+    if args.batch_cmd == "run":
+        result = _run_batch(
+            flow_path=Path(args.path),
+            db_path=Path(args.db),
+            profiles=[p.strip() for p in args.profiles.split(",") if p.strip()],
+            inputs=_parse_inputs(args.inputs),
+            max_concurrent=args.max_concurrent,
+            fail_fast=args.fail_fast,
+        )
+        print(json.dumps({
+            "batch_id": result.batch_id,
+            "status": result.status,
+            "total": result.total,
+            "succeeded": result.succeeded,
+            "failed": result.failed,
+        }, indent=2))
+        return 0 if result.status == "completed" and result.failed == 0 else 2
+
+    if args.batch_cmd == "ls":
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from tegufox_core.database import Base, FlowBatch, FlowRecord
+
+        eng = create_engine(f"sqlite:///{Path('data/tegufox.db').resolve()}")
+        Base.metadata.create_all(eng)
+        s = sessionmaker(bind=eng)()
+        try:
+            q = (s.query(FlowBatch, FlowRecord)
+                 .join(FlowRecord, FlowRecord.id == FlowBatch.flow_id)
+                 .order_by(FlowBatch.started_at.desc())
+                 .limit(args.limit))
+            for b, f in q:
+                print(f"{b.batch_id}\t{f.name}\t{b.status}\t{b.succeeded}/{b.total}\t{b.started_at.isoformat()}")
+            return 0
+        finally:
+            s.close()
+
+    if args.batch_cmd == "show":
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from tegufox_core.database import Base, FlowBatch, FlowRun, FlowRecord
+
+        eng = create_engine(f"sqlite:///{Path('data/tegufox.db').resolve()}")
+        Base.metadata.create_all(eng)
+        s = sessionmaker(bind=eng)()
+        try:
+            b = s.query(FlowBatch).filter_by(batch_id=args.batch_id).first()
+            if b is None:
+                print(f"not found: {args.batch_id}", file=sys.stderr)
+                return 1
+            print(json.dumps({
+                "batch_id": b.batch_id,
+                "status": b.status,
+                "total": b.total,
+                "succeeded": b.succeeded,
+                "failed": b.failed,
+                "started_at": b.started_at.isoformat() if b.started_at else None,
+                "finished_at": b.finished_at.isoformat() if b.finished_at else None,
+            }, indent=2))
+            print()
+            print("Per-profile runs:")
+            for r in s.query(FlowRun).filter_by(batch_id=b.batch_id):
+                print(f"  {r.run_id}\t{r.profile_name}\t{r.status}\t{r.error_text or ''}")
+            return 0
+        finally:
+            s.close()
+
+    return 1
 
 
 def run_cli(argv: Optional[List[str]] = None) -> int:
@@ -84,6 +182,9 @@ def run_cli(argv: Optional[List[str]] = None) -> int:
 
     if args.cmd == "runs":
         return _runs_cmd(args)
+
+    if args.cmd == "batch":
+        return _batch_cmd(args)
 
     return 1
 
