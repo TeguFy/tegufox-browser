@@ -27,6 +27,10 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--db", default="data/tegufox.db")
     r.add_argument("--proxy", dest="proxy_name", default=None,
                    help="Name of an imported proxy from proxies.db")
+    r.add_argument("--keep-browser", dest="keep_browser_open",
+                   action="store_true",
+                   help="Leave the browser open after the flow finishes "
+                        "so you can interact manually; close the window to exit.")
     g = r.add_mutually_exclusive_group()
     g.add_argument("--resume")
     g.add_argument("--resume-from", dest="resume_from")
@@ -178,6 +182,7 @@ def run_cli(argv: Optional[List[str]] = None) -> int:
             resume=args.resume,
             resume_from=args.resume_from,
             proxy_name=args.proxy_name,
+            keep_browser_open=args.keep_browser_open,
         )
         print(json.dumps({
             "run_id": result.run_id,

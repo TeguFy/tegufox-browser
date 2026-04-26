@@ -137,6 +137,7 @@ class FlowEngine:
         resume_from: Optional[str] = None,
         batch_id: Optional[str] = None,
         proxy_name: Optional[str] = None,
+        keep_browser_open: bool = False,
     ) -> RunResult:
         self._validate_inputs(flow, inputs)
         run_id = resume or str(uuid.uuid4())
@@ -216,7 +217,12 @@ class FlowEngine:
                         f"failed to load proxy {proxy_name!r}: {e}"
                     ) from e
 
-            with TegufoxSession(**session_kwargs) as session:
+            # Manual enter/exit so we can choose whether to close the
+            # browser after flow completion (keep_browser_open=True keeps
+            # it alive until the user closes the window manually).
+            session = TegufoxSession(**session_kwargs)
+            session.__enter__()
+            try:
                 try:
                     from tegufox_automation import HumanMouse, HumanKeyboard
                 except ImportError:
@@ -245,13 +251,33 @@ class FlowEngine:
                 finally:
                     last = ctx.current_step_id
 
-        with self._db() as s:
-            row = s.query(FlowRun).filter_by(run_id=run_id).one()
-            row.status = status
-            row.last_step_id = last
-            row.error_text = err
-            row.finished_at = datetime.utcnow()
-            s.commit()
+                # Persist run status BEFORE the optional keep-open wait
+                # so the user / dashboard sees completion immediately.
+                with self._db() as s2:
+                    row = s2.query(FlowRun).filter_by(run_id=run_id).one()
+                    row.status = status
+                    row.last_step_id = last
+                    row.error_text = err
+                    row.finished_at = datetime.utcnow()
+                    s2.commit()
+
+                if keep_browser_open:
+                    import time as _time
+                    ctx.logger.info(
+                        "Flow finished — browser kept open. Close the window "
+                        "manually to release resources."
+                    )
+                    try:
+                        while not session.page.is_closed():
+                            _time.sleep(0.5)
+                    except Exception:
+                        # Page may already be closed or session torn down.
+                        pass
+            finally:
+                try:
+                    session.__exit__(None, None, None)
+                except Exception:
+                    pass
 
         return RunResult(
             run_id=run_id, status=status,

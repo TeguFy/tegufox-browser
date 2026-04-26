@@ -31,6 +31,7 @@ def run_flow(
     resume_from: Optional[str] = None,
     batch_id: Optional[str] = None,
     proxy_name: Optional[str] = None,
+    keep_browser_open: bool = False,
 ) -> RunResult:
     flow = load_flow(flow_path)
     Session = _session_factory(db_path)
@@ -39,4 +40,5 @@ def run_flow(
         flow, inputs=inputs, profile_name=profile_name,
         resume=resume, resume_from=resume_from,
         batch_id=batch_id, proxy_name=proxy_name,
+        keep_browser_open=keep_browser_open,
     )

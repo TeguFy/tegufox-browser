@@ -11,7 +11,7 @@ from typing import List
 from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
-    QPushButton, QComboBox, QTextEdit, QFileDialog, QMessageBox,
+    QPushButton, QComboBox, QTextEdit, QFileDialog, QMessageBox, QCheckBox,
 )
 
 from sqlalchemy import create_engine
@@ -25,12 +25,14 @@ from tegufox_flow.runtime import run_flow
 class _RunWorker(QThread):
     finished_with = pyqtSignal(dict)
 
-    def __init__(self, flow_path: Path, profile: str, inputs: dict, proxy_name: str = ""):
+    def __init__(self, flow_path: Path, profile: str, inputs: dict,
+                 proxy_name: str = "", keep_browser_open: bool = False):
         super().__init__()
         self.flow_path = flow_path
         self.profile = profile
         self.inputs = inputs
         self.proxy_name = proxy_name
+        self.keep_browser_open = keep_browser_open
 
     def run(self):
         try:
@@ -39,6 +41,7 @@ class _RunWorker(QThread):
                 profile_name=self.profile,
                 inputs=self.inputs,
                 proxy_name=self.proxy_name or None,
+                keep_browser_open=self.keep_browser_open,
             )
             self.finished_with.emit({
                 "run_id": result.run_id, "status": result.status,
@@ -64,6 +67,11 @@ class FlowsPage(QWidget):
         self.profile_combo = QComboBox()
         self.proxy_combo = QComboBox()
         self.proxy_combo.setMinimumWidth(180)
+        self.keep_browser_chk = QCheckBox("Keep browser open after run")
+        self.keep_browser_chk.setToolTip(
+            "After the flow finishes, leave the browser window open so you "
+            "can interact manually. Close the window to release resources."
+        )
         self.run_btn = QPushButton("Run")
         self.upload_btn = QPushButton("Upload YAML…")
         self.new_btn = QPushButton("New Flow")
@@ -76,6 +84,7 @@ class FlowsPage(QWidget):
         row.addWidget(self.profile_combo)
         row.addWidget(QLabel("Proxy:"))
         row.addWidget(self.proxy_combo)
+        row.addWidget(self.keep_browser_chk)
         row.addWidget(self.new_btn)
         row.addWidget(self.upload_btn)
         row.addWidget(self.batch_btn)
@@ -194,7 +203,11 @@ class FlowsPage(QWidget):
             f.write(yaml_text)
             tmp = Path(f.name)
 
-        worker = _RunWorker(tmp, profile, inputs, proxy_name=proxy_name)
+        worker = _RunWorker(
+            tmp, profile, inputs,
+            proxy_name=proxy_name,
+            keep_browser_open=self.keep_browser_chk.isChecked(),
+        )
         worker.finished_with.connect(self._on_run_done)
         self._workers.append(worker)
         self.log.append(f"Starting {item.text()} on {profile}…")
