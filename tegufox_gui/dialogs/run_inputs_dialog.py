@@ -22,7 +22,7 @@ from typing import Any, Dict, List
 
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QHBoxLayout, QLineEdit, QSpinBox,
-    QDoubleSpinBox, QCheckBox, QPlainTextEdit, QPushButton, QLabel,
+    QDoubleSpinBox, QCheckBox, QPlainTextEdit, QPushButton, QLabel, QComboBox,
 )
 
 
@@ -49,6 +49,20 @@ class RunInputsDialog(QDialog):
         self._widgets: Dict[str, Any] = {}
 
         layout = QVBoxLayout(self)
+
+        # ---- Proxy selector --------------------------------------------
+        proxy_form = QFormLayout()
+        self.proxy_combo = QComboBox()
+        self.proxy_combo.addItem("(none — use profile default)", "")
+        try:
+            from tegufox_core.proxy_manager import ProxyManager
+            for name in ProxyManager().list():
+                self.proxy_combo.addItem(name, name)
+        except Exception:
+            pass
+        proxy_form.addRow("Proxy:", self.proxy_combo)
+        layout.addLayout(proxy_form)
+
         if not inputs_decl:
             layout.addWidget(QLabel(f"<i>{flow_name}</i> declares no inputs."))
         else:
@@ -140,6 +154,11 @@ class RunInputsDialog(QDialog):
             if kind == "list":
                 return [s.strip() for s in text.split(",") if s.strip()]
             raise
+
+    def proxy_name(self) -> str:
+        """Selected proxy name; empty string when 'none' picked."""
+        data = self.proxy_combo.currentData()
+        return data or ""
 
     def values(self) -> Dict[str, Any]:
         out: Dict[str, Any] = {}

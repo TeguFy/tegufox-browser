@@ -25,6 +25,8 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--inputs", nargs="*", default=[],
                    help="key=value pairs (parsed as JSON if possible)")
     r.add_argument("--db", default="data/tegufox.db")
+    r.add_argument("--proxy", dest="proxy_name", default=None,
+                   help="Name of an imported proxy from proxies.db")
     g = r.add_mutually_exclusive_group()
     g.add_argument("--resume")
     g.add_argument("--resume-from", dest="resume_from")
@@ -175,6 +177,7 @@ def run_cli(argv: Optional[List[str]] = None) -> int:
             db_path=Path(args.db),
             resume=args.resume,
             resume_from=args.resume_from,
+            proxy_name=args.proxy_name,
         )
         print(json.dumps({
             "run_id": result.run_id,

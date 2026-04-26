@@ -25,15 +25,21 @@ from tegufox_flow.runtime import run_flow
 class _RunWorker(QThread):
     finished_with = pyqtSignal(dict)
 
-    def __init__(self, flow_path: Path, profile: str, inputs: dict):
+    def __init__(self, flow_path: Path, profile: str, inputs: dict, proxy_name: str = ""):
         super().__init__()
         self.flow_path = flow_path
         self.profile = profile
         self.inputs = inputs
+        self.proxy_name = proxy_name
 
     def run(self):
         try:
-            result = run_flow(self.flow_path, profile_name=self.profile, inputs=self.inputs)
+            result = run_flow(
+                self.flow_path,
+                profile_name=self.profile,
+                inputs=self.inputs,
+                proxy_name=self.proxy_name or None,
+            )
             self.finished_with.emit({
                 "run_id": result.run_id, "status": result.status,
                 "last_step_id": result.last_step_id, "error": result.error,
@@ -159,19 +165,21 @@ class FlowsPage(QWidget):
             QMessageBox.critical(self, "Cannot parse flow", str(e))
             return
 
-        if flow.inputs:
-            from tegufox_gui.dialogs.run_inputs_dialog import RunInputsDialog
-            dlg = RunInputsDialog(flow.name, flow.inputs, parent=self)
-            if not dlg.exec():
-                return
-            inputs = dlg.values()
+        # Always show the dialog (even with no flow inputs) so the user can
+        # pick a proxy from the imported list.
+        from tegufox_gui.dialogs.run_inputs_dialog import RunInputsDialog
+        dlg = RunInputsDialog(flow.name, flow.inputs, parent=self)
+        if not dlg.exec():
+            return
+        inputs = dlg.values() if flow.inputs else {}
+        proxy_name = dlg.proxy_name()
 
         import tempfile
         with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
             f.write(yaml_text)
             tmp = Path(f.name)
 
-        worker = _RunWorker(tmp, profile, inputs)
+        worker = _RunWorker(tmp, profile, inputs, proxy_name=proxy_name)
         worker.finished_with.connect(self._on_run_done)
         self._workers.append(worker)
         self.log.append(f"Starting {item.text()} on {profile}…")

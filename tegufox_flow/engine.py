@@ -136,6 +136,7 @@ class FlowEngine:
         resume: Optional[str] = None,
         resume_from: Optional[str] = None,
         batch_id: Optional[str] = None,
+        proxy_name: Optional[str] = None,
     ) -> RunResult:
         self._validate_inputs(flow, inputs)
         run_id = resume or str(uuid.uuid4())
@@ -183,7 +184,39 @@ class FlowEngine:
                     vars_ = dict(cp.vars)
                     resume_step = self._step_after(flow.steps, cp.step_id)
 
-            with TegufoxSession(profile=profile_name) as session:
+            # Resolve proxy: explicit override → ProxyManager.load(name) →
+            # SessionConfig.proxy dict the way TegufoxSession expects.
+            session_kwargs: dict = {"profile": profile_name}
+            if proxy_name:
+                try:
+                    from tegufox_core.proxy_manager import ProxyManager, format_proxy_url
+                    from tegufox_automation.session import SessionConfig
+                    pm = ProxyManager()
+                    proxy_dict = pm.load(proxy_name)
+                    if proxy_dict is None:
+                        raise ValueError(
+                            f"proxy {proxy_name!r} not found in proxies.db"
+                        )
+                    proxy_url = format_proxy_url(proxy_dict)
+                    cfg = SessionConfig(proxy={
+                        "server": proxy_url.split("@")[-1] if "@" in proxy_url
+                                  else proxy_url,
+                        "username": proxy_dict.get("username") or "",
+                        "password": proxy_dict.get("password") or "",
+                    })
+                    # If url has scheme://host:port (no auth), reconstruct server.
+                    parts = proxy_url.split("@")
+                    if len(parts) == 2:
+                        scheme = parts[0].split("://")[0]
+                        host_port = parts[1]
+                        cfg.proxy["server"] = f"{scheme}://{host_port}"
+                    session_kwargs["config"] = cfg
+                except Exception as e:
+                    raise RuntimeError(
+                        f"failed to load proxy {proxy_name!r}: {e}"
+                    ) from e
+
+            with TegufoxSession(**session_kwargs) as session:
                 try:
                     from tegufox_automation import HumanMouse, HumanKeyboard
                 except ImportError:
