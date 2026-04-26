@@ -62,6 +62,8 @@ class FlowsPage(QWidget):
 
         row = QHBoxLayout()
         self.profile_combo = QComboBox()
+        self.proxy_combo = QComboBox()
+        self.proxy_combo.setMinimumWidth(180)
         self.run_btn = QPushButton("Run")
         self.upload_btn = QPushButton("Upload YAML…")
         self.new_btn = QPushButton("New Flow")
@@ -72,6 +74,8 @@ class FlowsPage(QWidget):
         self.batch_btn.clicked.connect(self._on_batch)
         row.addWidget(QLabel("Profile:"))
         row.addWidget(self.profile_combo)
+        row.addWidget(QLabel("Proxy:"))
+        row.addWidget(self.proxy_combo)
         row.addWidget(self.new_btn)
         row.addWidget(self.upload_btn)
         row.addWidget(self.batch_btn)
@@ -106,6 +110,15 @@ class FlowsPage(QWidget):
             pm = ProfileManager()
             for name in pm.list():
                 self.profile_combo.addItem(name)
+        except Exception:
+            pass
+
+        self.proxy_combo.clear()
+        self.proxy_combo.addItem("(none — profile default)", "")
+        try:
+            from tegufox_core.proxy_manager import ProxyManager
+            for name in ProxyManager().list():
+                self.proxy_combo.addItem(name, name)
         except Exception:
             pass
 
@@ -165,14 +178,16 @@ class FlowsPage(QWidget):
             QMessageBox.critical(self, "Cannot parse flow", str(e))
             return
 
-        # Always show the dialog (even with no flow inputs) so the user can
-        # pick a proxy from the imported list.
-        from tegufox_gui.dialogs.run_inputs_dialog import RunInputsDialog
-        dlg = RunInputsDialog(flow.name, flow.inputs, parent=self)
-        if not dlg.exec():
-            return
-        inputs = dlg.values() if flow.inputs else {}
-        proxy_name = dlg.proxy_name()
+        # Proxy now lives on the toolbar, so the inputs dialog only opens
+        # when the flow declares inputs.
+        inputs: dict = {}
+        if flow.inputs:
+            from tegufox_gui.dialogs.run_inputs_dialog import RunInputsDialog
+            dlg = RunInputsDialog(flow.name, flow.inputs, parent=self)
+            if not dlg.exec():
+                return
+            inputs = dlg.values()
+        proxy_name = self.proxy_combo.currentData() or ""
 
         import tempfile
         with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
