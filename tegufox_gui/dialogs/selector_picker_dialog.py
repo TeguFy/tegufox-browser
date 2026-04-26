@@ -165,7 +165,8 @@ def html_to_selector(html: str) -> Optional[str]:
 
 class _PickerWorker(QThread):
     status = pyqtSignal(str)
-    element_picked = pyqtSignal(str, str)   # (selector, outer_html)
+    element_picked = pyqtSignal(str, str)              # (selector, outer_html)
+    pages_changed = pyqtSignal(list, int)              # (urls, current_idx)
     crashed = pyqtSignal(str)
 
     def __init__(self, profile_name: str, url: str, parent=None):
@@ -185,6 +186,10 @@ class _PickerWorker(QThread):
         """Arm the picker for one capture; auto-disarms after the user clicks."""
         self._actions.put(("arm", None))
 
+    def request_set_target(self, idx: int) -> None:
+        """Switch which page (main or a popup) the picker watches and acts on."""
+        self._actions.put(("set_target", int(idx)))
+
     def run(self) -> None:
         try:
             from tegufox_automation import TegufoxSession
@@ -198,20 +203,66 @@ class _PickerWorker(QThread):
                     "Browser ready. Interact freely; press 'Pick Element' "
                     "in the dialog when you want to capture a selector."
                 )
+
+                tracked: List = [page]                  # all pages we've injected JS into
+                target_idx = 0
+                self._emit_pages(tracked, target_idx)
+
                 while not self._stop:
+                    # 1. Reconcile open pages with our tracked list — pick up
+                    #    popups (Login-with-Google, OAuth, etc.) and drop closed ones.
+                    try:
+                        live = list(page.context.pages)
+                    except Exception:
+                        live = list(tracked)
+
+                    changed = False
+                    for p in live:
+                        if p not in tracked:
+                            tracked.append(p)
+                            try:
+                                p.evaluate(PICKER_JS)
+                            except Exception:
+                                pass
+                            self.status.emit(
+                                f"New popup/tab detected — switch via 'Target page'."
+                            )
+                            changed = True
+                    new_tracked = [p for p in tracked if p in live]
+                    if len(new_tracked) != len(tracked):
+                        tracked = new_tracked
+                        if target_idx >= len(tracked):
+                            target_idx = max(0, len(tracked) - 1)
+                        changed = True
+                    if changed:
+                        self._emit_pages(tracked, target_idx)
+
+                    target = tracked[target_idx] if tracked else page
+
+                    # 2. Drain queued commands against the current target.
                     try:
                         while True:
                             cmd, arg = self._actions.get_nowait()
                             if cmd == "test_click":
-                                self._do_test_click(page, arg)
+                                self._do_test_click(target, arg)
                             elif cmd == "arm":
-                                self._do_arm(page)
+                                self._do_arm(target)
+                            elif cmd == "set_target":
+                                if 0 <= int(arg) < len(tracked):
+                                    target_idx = int(arg)
+                                    self.status.emit(
+                                        f"Target switched to page {target_idx + 1}: "
+                                        f"{tracked[target_idx].url}"
+                                    )
+                                    self._emit_pages(tracked, target_idx)
                     except queue.Empty:
                         pass
 
+                    # 3. Poll target for a captured selector.
+                    target = tracked[target_idx] if tracked else page
                     try:
-                        sel = page.evaluate("() => window.__teguPickedSelector")
-                        html = page.evaluate("() => window.__teguPickedHtml")
+                        sel = target.evaluate("() => window.__teguPickedSelector")
+                        html = target.evaluate("() => window.__teguPickedHtml")
                     except Exception:
                         if self._stop:
                             return
@@ -219,7 +270,7 @@ class _PickerWorker(QThread):
                     if sel:
                         self.element_picked.emit(str(sel), str(html or ""))
                         try:
-                            page.evaluate(
+                            target.evaluate(
                                 "() => { window.__teguPickedSelector = null;"
                                 " window.__teguPickedHtml = null; }"
                             )
@@ -228,6 +279,16 @@ class _PickerWorker(QThread):
                     self.msleep(300)
         except Exception as e:
             self.crashed.emit(f"{type(e).__name__}: {e}")
+
+    def _emit_pages(self, tracked, target_idx: int) -> None:
+        urls: List[str] = []
+        for i, p in enumerate(tracked):
+            try:
+                u = p.url
+            except Exception:
+                u = "(closed)"
+            urls.append(u or "(loading)")
+        self.pages_changed.emit(urls, target_idx)
 
     def _do_arm(self, page) -> None:
         try:
@@ -307,6 +368,19 @@ class SelectorPickerDialog(QDialog):
             self.profile_combo.addItem(p)
         profile_row.addWidget(self.profile_combo, 1)
         layout.addLayout(profile_row)
+
+        # ---- Target page (main + popups) --------------------------------
+        target_row = QHBoxLayout()
+        target_row.addWidget(QLabel("Target page:"))
+        self.target_combo = QComboBox()
+        self.target_combo.setToolTip(
+            "When the site opens a popup (e.g. 'Login with Google'), it "
+            "appears here. Select it to pick selectors inside the popup."
+        )
+        self.target_combo.setMinimumWidth(360)
+        self.target_combo.currentIndexChanged.connect(self._on_target_change)
+        target_row.addWidget(self.target_combo, 1)
+        layout.addLayout(target_row)
 
         # ---- Selector edit + Test Click ----------------------------------
         sel_group = QGroupBox("Selected selector (editable)")
@@ -421,6 +495,7 @@ class SelectorPickerDialog(QDialog):
         self._worker = _PickerWorker(profile, url, parent=self)
         self._worker.status.connect(self.status_label.setText)
         self._worker.element_picked.connect(self._on_element_picked)
+        self._worker.pages_changed.connect(self._on_pages_changed)
         self._worker.crashed.connect(self._on_crashed)
         self._worker.start()
 
@@ -429,6 +504,22 @@ class SelectorPickerDialog(QDialog):
             self.status_label.setText("Open Browser first.")
             return
         self._worker.request_arm_picker()
+
+    def _on_pages_changed(self, urls: list, current_idx: int) -> None:
+        # Block signals while rebuilding so we don't echo back to the worker.
+        self.target_combo.blockSignals(True)
+        self.target_combo.clear()
+        for i, u in enumerate(urls):
+            label = u if len(u) <= 80 else u[:77] + "…"
+            self.target_combo.addItem(f"{i + 1}. {label}")
+        if 0 <= current_idx < self.target_combo.count():
+            self.target_combo.setCurrentIndex(current_idx)
+        self.target_combo.blockSignals(False)
+
+    def _on_target_change(self, idx: int) -> None:
+        if idx < 0 or self._worker is None:
+            return
+        self._worker.request_set_target(idx)
 
     def _on_element_picked(self, sel: str, html: str) -> None:
         self._selected_selector = sel
