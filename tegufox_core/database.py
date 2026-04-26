@@ -397,6 +397,7 @@ class FlowRun(Base):
     finished_at = Column(DateTime)
     last_step_id = Column(String(255))
     error_text = Column(Text)
+    batch_id = Column(String(64), ForeignKey("flow_batches.batch_id"), nullable=True, index=True)
 
 
 class FlowCheckpoint(Base):
@@ -420,6 +421,20 @@ class FlowKVState(Base):
     key = Column(String(255), primary_key=True)
     value_json = Column(Text, nullable=False)
     updated_at = Column(DateTime, nullable=False)
+
+
+class FlowBatch(Base):
+    __tablename__ = "flow_batches"
+
+    batch_id    = Column(String(64), primary_key=True)
+    flow_id     = Column(Integer, ForeignKey("flows.id"), nullable=False, index=True)
+    inputs_json = Column(Text, nullable=False, default="{}")
+    status      = Column(String(32), nullable=False, default="running", index=True)
+    total       = Column(Integer, nullable=False, default=0)
+    succeeded   = Column(Integer, nullable=False, default=0)
+    failed      = Column(Integer, nullable=False, default=0)
+    started_at  = Column(DateTime, nullable=False)
+    finished_at = Column(DateTime)
 
 
 class ProfileDatabase:
