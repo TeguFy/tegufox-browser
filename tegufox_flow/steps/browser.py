@@ -78,6 +78,7 @@ def _native_click(ctx, sel: str, p: dict) -> None:
     ctx.page.locator(sel).click(
         button=p.get("button", "left"),
         click_count=int(p.get("click_count", 1)),
+        force=bool(p.get("force", False)),
     )
 
 

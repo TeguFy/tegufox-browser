@@ -51,6 +51,8 @@ STEP_FORM: dict = {
         Field("human", "bool", default=True),
         Field("button", "select", choices=["left", "right", "middle"], default="left"),
         Field("click_count", "int", default=1),
+        Field("force", "bool", default=False,
+              help="Bypass actionability checks (use when overlays intercept clicks)"),
     ],
     "browser.type": [
         Field("selector", "string", required=True, placeholder="#q"),

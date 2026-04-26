@@ -75,6 +75,7 @@ steps:
     type: browser.click
     selector: '[role="button"]:has-text("Đăng nhập bằng Google"), [role="button"]:has-text("Sign in with Google"), [role="button"]:has-text("Continue with Google"), button:has-text("Đăng nhập bằng Google"), button:has-text("Sign in with Google"), iframe[src*="accounts.google.com/gsi"], iframe[title*="Google"]'
     human: false
+    force: true
 
   # -----------------------------------------------------------------
   # Step 3: wait for Google OAuth — works for both same-tab redirect
