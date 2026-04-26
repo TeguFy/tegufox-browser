@@ -1,0 +1,150 @@
+schema_version: 1
+name: x_com_login_google
+description: |
+  Log into x.com (Twitter) via "Sign in with Google" OAuth popup.
+
+  IMPORTANT — selectors are best guesses; x.com's DOM changes often.
+  Use the Pick Element button in the editor against your real account
+  to capture stable selectors before relying on this in production.
+
+  Notes:
+    * Account 2FA / verification challenges are NOT handled.
+    * If Google flags the login as "untrusted device", the flow will
+      get stuck on the device-confirmation page; manual Resume
+      (tegufox-cli flow run ... --resume <run_id>) may be needed.
+    * After login, the flow saves a screenshot of the home timeline
+      so you can verify success without scraping anything else.
+
+inputs:
+  email:
+    type: string
+    required: true
+  password:
+    type: string
+    required: true
+  out_dir:
+    type: string
+    default: "data/runs/x-com"
+
+defaults:
+  on_error:
+    action: abort
+
+steps:
+  # -----------------------------------------------------------------
+  # Step 1: open x.com and click "Sign in"
+  # -----------------------------------------------------------------
+  - id: open_home
+    type: browser.goto
+    url: "https://x.com/"
+    wait_until: load
+    timeout_ms: 30000
+
+  - id: wait_signin_btn
+    type: browser.wait_for
+    selector: 'a[href="/login"], a[data-testid="loginButton"]'
+    timeout_ms: 15000
+
+  - id: click_signin
+    type: browser.click
+    selector: 'a[href="/login"], a[data-testid="loginButton"]'
+
+  # -----------------------------------------------------------------
+  # Step 2: on /login, click "Sign in with Google"
+  # -----------------------------------------------------------------
+  # x.com renders the Google SSO button in a div with role=button. The
+  # exact selector drifts; common candidates below — pick yours via the
+  # editor's Pick Element button if these don't match.
+  - id: wait_google_btn
+    type: browser.wait_for
+    selector: 'div[role="button"][data-testid*="google"], div[aria-label*="Google"]'
+    timeout_ms: 15000
+
+  - id: click_google_signin
+    type: browser.click
+    selector: 'div[role="button"][data-testid*="google"], div[aria-label*="Google"]'
+
+  # -----------------------------------------------------------------
+  # Step 3: wait for the Google OAuth popup and switch into it
+  # -----------------------------------------------------------------
+  - id: wait_oauth_popup
+    type: browser.wait_for_popup
+    url_contains: "accounts.google.com"
+    timeout_ms: 30000
+
+  # -----------------------------------------------------------------
+  # Step 4: enter email in the popup
+  # -----------------------------------------------------------------
+  - id: wait_email_field
+    type: browser.wait_for
+    selector: '#identifierId'
+    timeout_ms: 15000
+
+  - id: type_email
+    type: browser.type
+    selector: '#identifierId'
+    text: "{{ inputs.email }}"
+    clear_first: true
+
+  - id: click_email_next
+    type: browser.click
+    selector: '#identifierNext'
+
+  # -----------------------------------------------------------------
+  # Step 5: enter password
+  # -----------------------------------------------------------------
+  - id: wait_password_field
+    type: browser.wait_for
+    selector: 'input[type="password"][name="Passwd"]'
+    state: visible
+    timeout_ms: 20000
+
+  - id: type_password
+    type: browser.type
+    selector: 'input[type="password"][name="Passwd"]'
+    text: "{{ inputs.password }}"
+    clear_first: true
+
+  - id: click_password_next
+    type: browser.click
+    selector: '#passwordNext'
+
+  # -----------------------------------------------------------------
+  # Step 6: wait for the popup to close, then switch back to x.com
+  # -----------------------------------------------------------------
+  # After successful auth, Google closes the popup and x.com finishes
+  # the redirect. We give it some time, then explicitly switch back.
+  - id: post_auth_settle
+    type: control.sleep
+    ms: 6000
+
+  - id: back_to_main
+    type: browser.switch_to_main
+
+  # -----------------------------------------------------------------
+  # Step 7: confirm we landed on the timeline + save screenshot
+  # -----------------------------------------------------------------
+  - id: wait_home_timeline
+    type: browser.wait_for
+    selector: 'div[data-testid="primaryColumn"], a[data-testid="AppTabBar_Home_Link"]'
+    state: visible
+    timeout_ms: 30000
+    on_error:
+      action: skip
+
+  - id: read_url_after_login
+    type: extract.url
+    set: final_url
+
+  - id: log_url
+    type: io.log
+    level: info
+    message: "Final URL after login: {{ vars.final_url }}"
+
+  - id: screenshot
+    type: browser.screenshot
+    path: "{{ inputs.out_dir }}/login-result.png"
+    full_page: true
+
+editor:
+  positions: {}
