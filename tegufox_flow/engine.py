@@ -6,7 +6,7 @@ import time
 from typing import List, Optional
 
 from .dsl import Flow, OnError
-from .errors import StepError, GotoSignal
+from .errors import StepError, GotoSignal, BreakSignal, ContinueSignal
 from .steps import StepSpec, get_handler
 
 
@@ -46,7 +46,7 @@ class FlowEngine:
                 handler(spec, ctx)
                 ctx.checkpoints.save(ctx.run_id, spec.id, ctx.vars)
                 return
-            except (GotoSignal,):
+            except (GotoSignal, BreakSignal, ContinueSignal):
                 raise
             except Exception as e:
                 if isinstance(e, (StepError,)):
@@ -67,3 +67,34 @@ class FlowEngine:
                     )
                     raise GotoSignal(target=policy.goto_step) from e
                 raise StepError(step_id=spec.id, step_type=spec.type, cause=e) from e
+
+    def execute_steps(self, steps, ctx, *, resume_from: Optional[str] = None) -> None:
+        skipping = resume_from is not None
+        i = 0
+        while i < len(steps):
+            step = steps[i]
+            spec = step if isinstance(step, StepSpec) else _to_spec(step)
+            if skipping:
+                if spec.id == resume_from:
+                    skipping = False
+                else:
+                    i += 1
+                    continue
+            try:
+                self._execute_one(spec, ctx)
+            except GotoSignal as g:
+                target = g.target
+                idx = self._find_index(steps, target)
+                if idx is None:
+                    raise  # propagate to outer scope
+                i = idx
+                continue
+            i += 1
+
+    @staticmethod
+    def _find_index(steps, target: str) -> Optional[int]:
+        for idx, step in enumerate(steps):
+            sid = step.id if hasattr(step, "id") else step["id"]
+            if sid == target:
+                return idx
+        return None
