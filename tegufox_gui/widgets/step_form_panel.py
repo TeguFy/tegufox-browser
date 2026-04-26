@@ -6,13 +6,13 @@ EditableStep with the same params but values pulled from widgets. Nested
 """
 
 from __future__ import annotations
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List, Optional
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QFormLayout, QLineEdit, QSpinBox, QCheckBox,
-    QComboBox, QPlainTextEdit, QPushButton, QLabel, QGroupBox,
+    QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit, QSpinBox,
+    QCheckBox, QComboBox, QPlainTextEdit, QPushButton, QLabel, QGroupBox,
 )
 
 from .editable_flow import EditableStep
@@ -22,6 +22,48 @@ from .step_form_schema import Field, fields_for
 _MONO = QFont()
 _MONO.setStyleHint(QFont.StyleHint.Monospace)
 _MONO.setFamily("Menlo")
+
+
+SelectorPicker = Callable[[str], Optional[str]]
+"""(current_value) -> picked_selector (or None if user cancelled)."""
+
+
+class SelectorPickerLineEdit(QWidget):
+    """QLineEdit + 'Pick…' button. The button calls `picker(current)` which
+    typically opens a Camoufox session for visual element selection.
+
+    Exposes `text()`, `setText()`, `setPlaceholderText()` so it's
+    drop-in compatible with QLineEdit for read-back.
+    """
+
+    def __init__(self, picker: SelectorPicker, *, placeholder: str = "", parent=None):
+        super().__init__(parent)
+        self._picker = picker
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self._line = QLineEdit()
+        if placeholder:
+            self._line.setPlaceholderText(placeholder)
+        layout.addWidget(self._line, 1)
+        self._btn = QPushButton("Pick…")
+        self._btn.setMaximumWidth(70)
+        self._btn.setToolTip("Open browser and click an element to capture its selector")
+        self._btn.clicked.connect(self._on_pick)
+        layout.addWidget(self._btn)
+
+    def text(self) -> str:
+        return self._line.text()
+
+    def setText(self, value: str) -> None:
+        self._line.setText(value)
+
+    def setPlaceholderText(self, value: str) -> None:
+        self._line.setPlaceholderText(value)
+
+    def _on_pick(self) -> None:
+        picked = self._picker(self._line.text())
+        if picked:
+            self._line.setText(picked)
 
 
 class _NestedStepsButton(QPushButton):
@@ -49,11 +91,12 @@ class _NestedStepsButton(QPushButton):
 
 
 class StepFormPanel(QWidget):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, selector_picker: Optional[SelectorPicker] = None):
         super().__init__(parent)
         self._step: EditableStep | None = None
         self._widgets: Dict[str, Any] = {}
         self._unknown_params: Dict[str, Any] = {}
+        self._selector_picker = selector_picker
         self._layout = QVBoxLayout(self)
         self._inner = QWidget()
         self._inner_layout = QVBoxLayout(self._inner)
@@ -109,6 +152,11 @@ class StepFormPanel(QWidget):
             if f.multiline:
                 w = QPlainTextEdit(str(value) if value is not None else "")
                 w.setPlaceholderText(f.placeholder)
+                return w
+            if f.name == "selector" and self._selector_picker is not None:
+                w = SelectorPickerLineEdit(self._selector_picker, placeholder=f.placeholder)
+                if value is not None:
+                    w.setText(str(value))
                 return w
             w = QLineEdit(str(value) if value is not None else "")
             if f.placeholder:

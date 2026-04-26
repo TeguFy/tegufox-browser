@@ -53,7 +53,7 @@ class FlowEditorPage(QWidget):
 
         self.palette = StepPalette()
         self.list_widget = StepListWidget()
-        self.form_panel = StepFormPanel()
+        self.form_panel = StepFormPanel(selector_picker=self._open_selector_picker)
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(self.palette)
         splitter.addWidget(self.list_widget)
@@ -71,6 +71,30 @@ class FlowEditorPage(QWidget):
 
         self.palette.step_chosen.connect(self._on_palette_choice)
         self.list_widget.step_selected.connect(self._on_step_selected)
+
+    def _open_selector_picker(self, current: str) -> Optional[str]:
+        """Open SelectorPickerDialog for the user to click an element in
+        a real Camoufox session. Returns the picked selector or None."""
+        try:
+            from tegufox_core.profile_manager import ProfileManager
+            pm = ProfileManager()
+            try:
+                profiles = list(pm.list())
+            except AttributeError:
+                profiles = [p["name"] if isinstance(p, dict) else getattr(p, "name", str(p))
+                            for p in pm.list_profiles()]
+        except Exception:
+            profiles = []
+
+        from tegufox_gui.dialogs.selector_picker_dialog import SelectorPickerDialog
+        dlg = SelectorPickerDialog(
+            profile_names=profiles,
+            default_url=current if current.startswith("http") else "",
+            parent=self,
+        )
+        if dlg.exec():
+            return dlg.selected_selector() or None
+        return None
 
     def load_flow_by_name(self, name: str) -> None:
         s = self._session()
