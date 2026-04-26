@@ -92,3 +92,38 @@ def to_dict(ef: EditableFlow) -> Dict[str, Any]:
     if ef.editor_meta:
         out["editor"] = dict(ef.editor_meta)
     return out
+
+
+def validate_step_params(flow_dict: Dict[str, Any]) -> List[str]:
+    """Walk every step (incl. nested then/else/body) and check required
+    params per STEP_FORM schema. Returns a list of human-readable problems
+    (empty list = OK). parse_flow only validates structure, not per-type
+    params; this fills the gap so the editor's Save / Validate buttons
+    catch missing selectors etc. before the runtime does.
+    """
+    from tegufox_gui.widgets.step_form_schema import STEP_FORM
+
+    problems: List[str] = []
+
+    def _check(steps: List[Dict[str, Any]], path: str = "") -> None:
+        for s in steps:
+            sid = s.get("id", "?")
+            stype = s.get("type", "?")
+            full = f"{path}/{sid}" if path else sid
+            fields = STEP_FORM.get(stype, [])
+            for f in fields:
+                if not f.required:
+                    continue
+                val = s.get(f.name)
+                if val is None or (isinstance(val, str) and not val.strip()) \
+                        or (isinstance(val, list) and not val):
+                    problems.append(
+                        f"step {full!r} ({stype}): missing required param {f.name!r}"
+                    )
+            for nested_key in ("then", "else", "body"):
+                nested = s.get(nested_key)
+                if isinstance(nested, list):
+                    _check(nested, full)
+
+    _check(flow_dict.get("steps", []))
+    return problems

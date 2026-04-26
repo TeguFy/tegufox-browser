@@ -19,7 +19,7 @@ from tegufox_flow.dsl import parse_flow
 from tegufox_flow.errors import ValidationError
 
 from tegufox_gui.widgets.editable_flow import (
-    EditableFlow, EditableStep, from_pydantic, to_dict,
+    EditableFlow, EditableStep, from_pydantic, to_dict, validate_step_params,
 )
 from tegufox_gui.widgets.step_palette import StepPalette
 from tegufox_gui.widgets.step_list_widget import StepListWidget
@@ -148,7 +148,14 @@ class FlowEditorPage(QWidget):
         if not ef.name:
             return "name is required", False
         try:
-            parse_flow(to_dict(ef))
+            d = to_dict(ef)
+            parse_flow(d)
+            problems = validate_step_params(d)
+            if problems:
+                shown = "; ".join(problems[:3])
+                if len(problems) > 3:
+                    shown += f"  (+{len(problems) - 3} more)"
+                return shown, False
             return "valid", True
         except ValidationError as e:
             return str(e), False

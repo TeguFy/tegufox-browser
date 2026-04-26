@@ -69,3 +69,48 @@ def test_inputs_pass_through():
     ef = from_pydantic(flow)
     out = to_dict(ef)
     parse_flow(out)  # still valid
+
+
+def test_validate_step_params_catches_missing_required():
+    from tegufox_gui.widgets.editable_flow import validate_step_params
+
+    flow_dict = {
+        "schema_version": 1,
+        "name": "x",
+        "steps": [
+            {"id": "click_1", "type": "browser.click", "selector": ""},
+            {"id": "type_1", "type": "browser.type", "selector": "#x"},
+        ],
+    }
+    problems = validate_step_params(flow_dict)
+    assert any("click_1" in p and "selector" in p for p in problems)
+    assert any("type_1" in p and "text" in p for p in problems)
+
+
+def test_validate_step_params_clean_when_filled():
+    from tegufox_gui.widgets.editable_flow import validate_step_params
+
+    flow_dict = {
+        "schema_version": 1,
+        "name": "x",
+        "steps": [
+            {"id": "g", "type": "browser.goto", "url": "https://x"},
+            {"id": "c", "type": "browser.click", "selector": "#a"},
+        ],
+    }
+    assert validate_step_params(flow_dict) == []
+
+
+def test_validate_step_params_recurses_nested():
+    from tegufox_gui.widgets.editable_flow import validate_step_params
+
+    flow_dict = {
+        "schema_version": 1,
+        "name": "x",
+        "steps": [{
+            "id": "if_1", "type": "control.if", "when": "{{ true }}",
+            "then": [{"id": "inner", "type": "browser.click", "selector": ""}],
+        }],
+    }
+    problems = validate_step_params(flow_dict)
+    assert any("inner" in p and "selector" in p for p in problems)
