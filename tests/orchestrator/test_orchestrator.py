@@ -40,7 +40,7 @@ def test_orchestrator_runs_each_profile(tmp_path):
                          last_step_id="a", error=None, inputs=inputs)
 
     with patch("tegufox_flow.orchestrator._run_one_subprocess", side_effect=fake):
-        orch = Orchestrator(flow_path=flow_yaml, db_path=db, max_concurrent=1)
+        orch = Orchestrator(flow_path=flow_yaml, db_path=db, max_concurrent=1, executor_cls=__import__("concurrent.futures", fromlist=["ThreadPoolExecutor"]).ThreadPoolExecutor)
         result = orch.run(profiles=["a", "b", "c"], inputs={})
 
     assert sorted(calls) == ["a", "b", "c"]
@@ -56,7 +56,7 @@ def test_orchestrator_writes_batch_row(tmp_path):
 
     with patch("tegufox_flow.orchestrator._run_one_subprocess",
                side_effect=lambda args: _ok_result(args[1], f"r-{args[1]}")):
-        orch = Orchestrator(flow_path=flow_yaml, db_path=db, max_concurrent=1)
+        orch = Orchestrator(flow_path=flow_yaml, db_path=db, max_concurrent=1, executor_cls=__import__("concurrent.futures", fromlist=["ThreadPoolExecutor"]).ThreadPoolExecutor)
         result = orch.run(profiles=["x"], inputs={})
 
     eng = create_engine(f"sqlite:///{db}")
@@ -81,7 +81,7 @@ def test_orchestrator_aggregates_failures(tmp_path):
                 else _fail_result(profile, f"r-{profile}"))
 
     with patch("tegufox_flow.orchestrator._run_one_subprocess", side_effect=fake):
-        orch = Orchestrator(flow_path=flow_yaml, db_path=db, max_concurrent=1)
+        orch = Orchestrator(flow_path=flow_yaml, db_path=db, max_concurrent=1, executor_cls=__import__("concurrent.futures", fromlist=["ThreadPoolExecutor"]).ThreadPoolExecutor)
         result = orch.run(profiles=["a", "b", "c"], inputs={})
     assert result.succeeded == 1
     assert result.failed == 2
@@ -103,7 +103,7 @@ def test_per_profile_inputs_override(tmp_path):
         return _ok_result(profile, f"r-{profile}")
 
     with patch("tegufox_flow.orchestrator._run_one_subprocess", side_effect=fake):
-        orch = Orchestrator(flow_path=flow_yaml, db_path=db, max_concurrent=1)
+        orch = Orchestrator(flow_path=flow_yaml, db_path=db, max_concurrent=1, executor_cls=__import__("concurrent.futures", fromlist=["ThreadPoolExecutor"]).ThreadPoolExecutor)
         orch.run(profiles=["a", "b"], inputs={"q": "default"},
                  per_profile_inputs={"a": {"q": "alice"}})
 
@@ -122,7 +122,7 @@ def test_validates_required_inputs_before_dispatch(tmp_path):
 
     with patch("tegufox_flow.orchestrator._run_one_subprocess",
                side_effect=AssertionError("should not be called")):
-        orch = Orchestrator(flow_path=flow_yaml, db_path=db, max_concurrent=1)
+        orch = Orchestrator(flow_path=flow_yaml, db_path=db, max_concurrent=1, executor_cls=__import__("concurrent.futures", fromlist=["ThreadPoolExecutor"]).ThreadPoolExecutor)
         with pytest.raises(ValueError) as e:
             orch.run(profiles=["a"], inputs={})
         assert "q" in str(e.value)

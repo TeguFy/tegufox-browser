@@ -52,11 +52,17 @@ class Orchestrator:
         *,
         max_concurrent: int = 3,
         fail_fast: bool = False,
+        executor_cls=None,
     ):
+        # Default to ProcessPoolExecutor for Camoufox isolation (per spec §5):
+        # Playwright sync API uses greenlets pinned to the creating thread, so
+        # multiple sessions in one process collide. Tests inject ThreadPoolExecutor
+        # because MagicMock isn't picklable across process boundaries.
         self._flow_path = Path(flow_path)
         self._db_path = Path(db_path)
         self._max = max(1, int(max_concurrent))
         self._fail_fast = bool(fail_fast)
+        self._executor_cls = executor_cls or ProcessPoolExecutor
 
     def run(
         self,
@@ -121,7 +127,7 @@ class Orchestrator:
             for p in profiles
         ]
 
-        with ThreadPoolExecutor(max_workers=self._max) as ex:
+        with self._executor_cls(max_workers=self._max) as ex:
             future_to_profile = {
                 ex.submit(_run_one_subprocess, args): args[1]
                 for args in args_per_profile
