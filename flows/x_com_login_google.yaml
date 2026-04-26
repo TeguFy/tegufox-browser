@@ -32,27 +32,17 @@ defaults:
 
 steps:
   # -----------------------------------------------------------------
-  # Step 0: kill window.open so OAuth runs in the SAME tab.
-  # Camoufox/firefox-115 isolates popup windows in a process Playwright
-  # can't reach; redirecting the current tab is the only reliable way
-  # to keep automation in control of the auth flow.
-  # -----------------------------------------------------------------
-  - id: disable_popups
-    type: browser.disable_popups
-
-  # -----------------------------------------------------------------
   # Step 1: open x.com and click "Sign in"
   # -----------------------------------------------------------------
+  # Note: window.open override lives RIGHT BEFORE click_google_signin,
+  # not at session start, because x.com's own JS uses window.open for
+  # legit one-tap rendering during page init — overriding it that early
+  # leaves the login modal half-rendered.
   - id: open_home
     type: browser.goto
     url: "https://x.com/"
     wait_until: load
     timeout_ms: 30000
-
-  - id: re_disable_popups
-    type: browser.disable_popups
-    # init_script applies to NEW pages — but the page we just navigated
-    # via goto IS new in that sense, so re-arm to be safe.
 
   - id: wait_signin_btn
     type: browser.wait_for
@@ -106,12 +96,17 @@ steps:
   # role/tag containers.
   - id: wait_google_btn
     type: browser.wait_for
-    selector: '[role="button"]:has-text("Đăng nhập bằng Google"), [role="button"]:has-text("Sign in with Google"), [role="link"]:has-text("Đăng nhập bằng Google"), button:has-text("Đăng nhập bằng Google"), button:has-text("Sign in with Google"), a:has-text("Đăng nhập bằng Google"), div[tabindex]:has-text("Đăng nhập bằng Google")'
+    selector: '[role="button"]:has-text("Đăng nhập bằng Google"), [role="button"]:has-text("Sign in with Google"), [role="link"]:has-text("Đăng nhập bằng Google"), button:has-text("Đăng nhập bằng Google"), button:has-text("Sign in with Google"), a:has-text("Đăng nhập bằng Google"), div[tabindex]:has-text("Đăng nhập bằng Google"), iframe[src*="accounts.google.com/gsi"], iframe[title*="Google"]'
     timeout_ms: 30000
+
+  # JUST BEFORE clicking Google: redirect window.open → same-tab nav so
+  # Camoufox can't isolate the popup into an unreachable process.
+  - id: disable_popups_before_oauth
+    type: browser.disable_popups
 
   - id: click_google_signin
     type: browser.click
-    selector: '[role="button"]:has-text("Đăng nhập bằng Google"), [role="button"]:has-text("Sign in with Google"), [role="link"]:has-text("Đăng nhập bằng Google"), button:has-text("Đăng nhập bằng Google"), button:has-text("Sign in with Google"), a:has-text("Đăng nhập bằng Google"), div[tabindex]:has-text("Đăng nhập bằng Google")'
+    selector: '[role="button"]:has-text("Đăng nhập bằng Google"), [role="button"]:has-text("Sign in with Google"), [role="link"]:has-text("Đăng nhập bằng Google"), button:has-text("Đăng nhập bằng Google"), button:has-text("Sign in with Google"), a:has-text("Đăng nhập bằng Google"), div[tabindex]:has-text("Đăng nhập bằng Google"), iframe[src*="accounts.google.com/gsi"], iframe[title*="Google"]'
     human: false
     force: true
 
