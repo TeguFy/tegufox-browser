@@ -58,10 +58,13 @@ class FlowsPage(QWidget):
         self.profile_combo = QComboBox()
         self.run_btn = QPushButton("Run")
         self.upload_btn = QPushButton("Upload YAML…")
+        self.new_btn = QPushButton("New Flow")
         self.run_btn.clicked.connect(self._on_run)
         self.upload_btn.clicked.connect(self._on_upload)
+        self.new_btn.clicked.connect(self._on_new_flow)
         row.addWidget(QLabel("Profile:"))
         row.addWidget(self.profile_combo)
+        row.addWidget(self.new_btn)
         row.addWidget(self.upload_btn)
         row.addWidget(self.run_btn)
         layout.addLayout(row)
@@ -71,6 +74,7 @@ class FlowsPage(QWidget):
         layout.addWidget(self.log, 2)
 
         self._refresh()
+        self.list_widget.itemDoubleClicked.connect(self._on_edit_flow)
 
     def _session(self):
         eng = create_engine(f"sqlite:///{Path(self._db_path).resolve()}")
@@ -152,3 +156,31 @@ class FlowsPage(QWidget):
 
     def _on_run_done(self, result: dict):
         self.log.append(f"Result: {result}")
+
+    def _on_new_flow(self):
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout
+        from tegufox_gui.pages.flow_editor_page import FlowEditorPage
+        dlg = QDialog(self)
+        dlg.setWindowTitle("New Flow")
+        dlg.resize(1100, 700)
+        lo = QVBoxLayout(dlg)
+        editor = FlowEditorPage(db_path=self._db_path, parent=dlg)
+        lo.addWidget(editor)
+        dlg.exec()
+        self._refresh()
+
+    def _on_edit_flow(self):
+        item = self.list_widget.currentItem()
+        if item is None:
+            return
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout
+        from tegufox_gui.pages.flow_editor_page import FlowEditorPage
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Edit: {item.text()}")
+        dlg.resize(1100, 700)
+        lo = QVBoxLayout(dlg)
+        editor = FlowEditorPage(db_path=self._db_path, parent=dlg)
+        editor.load_flow_by_name(item.text())
+        lo.addWidget(editor)
+        dlg.exec()
+        self._refresh()
