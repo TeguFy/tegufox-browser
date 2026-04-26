@@ -54,3 +54,9 @@ def get_handler(step_type: str) -> Callable:
     if step_type not in STEP_REGISTRY:
         raise KeyError(f"unknown step type: {step_type}")
     return STEP_REGISTRY[step_type]
+
+
+# Side-effect imports: each submodule registers its handlers on import.
+# Tests do this explicitly per-file; production callers (runtime, GUI, REST)
+# only import tegufox_flow.engine which transitively imports this module.
+from . import browser, control, extract, io, state  # noqa: F401, E402
