@@ -85,24 +85,19 @@ steps:
     on_error:
       action: skip
 
-  # text= is Playwright's text engine — matches an element whose text
-  # CONTENT is exactly that string. Most reliable across DOM rewrites.
+  # NOTE — Playwright's `text=` selector engine cannot be mixed with CSS
+  # in a comma-separated list. Use only :has-text() / attribute CSS here.
+  # x.com renders buttons as <div role="button" tabindex="0"> wrapping a
+  # nested <span> with the visible text, so we match all common
+  # role/tag containers.
   - id: wait_google_btn
     type: browser.wait_for
-    selector: 'text="Đăng nhập bằng Google", text="Sign in with Google", text="Continue with Google", [role="button"]:has-text("Google"), button:has-text("Google")'
+    selector: '[role="button"]:has-text("Đăng nhập bằng Google"), [role="button"]:has-text("Sign in with Google"), [role="link"]:has-text("Đăng nhập bằng Google"), button:has-text("Đăng nhập bằng Google"), button:has-text("Sign in with Google"), a:has-text("Đăng nhập bằng Google"), div[tabindex]:has-text("Đăng nhập bằng Google")'
     timeout_ms: 30000
 
-  # -----------------------------------------------------------------
-  # Step 2b: click Google + capture popup atomically.
-  # Camoufox sometimes spawns the OAuth window in an isolated browser
-  # instance that page.context.pages polling can't reach. The canonical
-  # fix is to register Playwright's popup listener BEFORE the click, so
-  # the page-level "popup" event captures the new page the instant
-  # window.open fires — regardless of where it lands.
-  # -----------------------------------------------------------------
   - id: click_google_signin
     type: browser.click_and_wait_popup
-    selector: 'text="Đăng nhập bằng Google", text="Sign in with Google", text="Continue with Google", [role="button"]:has-text("Google"), button:has-text("Google")'
+    selector: '[role="button"]:has-text("Đăng nhập bằng Google"), [role="button"]:has-text("Sign in with Google"), [role="link"]:has-text("Đăng nhập bằng Google"), button:has-text("Đăng nhập bằng Google"), button:has-text("Sign in with Google"), a:has-text("Đăng nhập bằng Google"), div[tabindex]:has-text("Đăng nhập bằng Google")'
     timeout_ms: 30000
     force: true
 

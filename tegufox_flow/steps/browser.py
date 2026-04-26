@@ -24,7 +24,9 @@ def _goto(spec: StepSpec, ctx) -> None:
 @register("browser.wait_for", required=("selector",))
 def _wait_for(spec: StepSpec, ctx) -> None:
     p = spec.params
-    ctx.page.locator(ctx.render(p["selector"])).wait_for(
+    # `.first` avoids strict-mode violations and ensures we wait for the
+    # first match (rather than getting stuck on a hidden duplicate).
+    ctx.page.locator(ctx.render(p["selector"])).first.wait_for(
         state=p.get("state", "visible"),
         timeout=int(p.get("timeout_ms", _DEFAULT_TIMEOUT)),
     )
