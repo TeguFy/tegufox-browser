@@ -158,3 +158,72 @@ def test_hover_human(ctx):
         ctx,
     )
     ctx._human_mouse.move_to.assert_called_once_with("#x")
+
+
+def test_click_human_falls_back_to_native_on_error():
+    """If HumanMouse raises (e.g. Firefox missing windowUtils.sendMouseEvent),
+    the step still completes via native page.locator().click()."""
+    from unittest.mock import MagicMock
+    import logging
+    from tegufox_flow.steps import StepSpec, get_handler
+
+    ctx = MagicMock()
+    ctx.page = MagicMock()
+    ctx.render.side_effect = lambda s: s
+    ctx.logger = logging.getLogger("test_fallback")
+    ctx._human_mouse = MagicMock()
+    ctx._human_mouse.click.side_effect = RuntimeError(
+        "Protocol error (Page.dispatchMouseEvent)"
+    )
+    locator = MagicMock()
+    ctx.page.locator.return_value = locator
+
+    get_handler("browser.click")(
+        StepSpec(id="c", type="browser.click", params={"selector": "#b"}),
+        ctx,
+    )
+    ctx._human_mouse.click.assert_called_once_with("#b")
+    locator.click.assert_called_once()
+
+
+def test_type_human_falls_back_to_native_on_error():
+    from unittest.mock import MagicMock
+    import logging
+    from tegufox_flow.steps import StepSpec, get_handler
+
+    ctx = MagicMock()
+    ctx.page = MagicMock()
+    ctx.render.side_effect = lambda s: s
+    ctx.logger = logging.getLogger("test_fallback")
+    ctx._human_keyboard = MagicMock()
+    ctx._human_keyboard.type_into.side_effect = RuntimeError("nope")
+    locator = MagicMock()
+    ctx.page.locator.return_value = locator
+
+    get_handler("browser.type")(
+        StepSpec(id="t", type="browser.type",
+                 params={"selector": "#i", "text": "hi"}),
+        ctx,
+    )
+    ctx._human_keyboard.type_into.assert_called_once_with("#i", "hi")
+    locator.type.assert_called_once_with("hi", delay=0)
+
+
+def test_click_human_none_uses_native():
+    """When _human_mouse is None (e.g. tegufox_automation import failed at
+    runtime), the click still succeeds via native fallback."""
+    from unittest.mock import MagicMock
+    from tegufox_flow.steps import StepSpec, get_handler
+
+    ctx = MagicMock()
+    ctx.page = MagicMock()
+    ctx.render.side_effect = lambda s: s
+    ctx._human_mouse = None
+    locator = MagicMock()
+    ctx.page.locator.return_value = locator
+
+    get_handler("browser.click")(
+        StepSpec(id="c", type="browser.click", params={"selector": "#b"}),
+        ctx,
+    )
+    locator.click.assert_called_once()

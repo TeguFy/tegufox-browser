@@ -74,17 +74,40 @@ def _select_option(spec: StepSpec, ctx) -> None:
     )
 
 
+def _native_click(ctx, sel: str, p: dict) -> None:
+    ctx.page.locator(sel).click(
+        button=p.get("button", "left"),
+        click_count=int(p.get("click_count", 1)),
+    )
+
+
+def _native_type(ctx, sel: str, text: str, p: dict) -> None:
+    ctx.page.locator(sel).type(text, delay=int(p.get("delay_ms", 0)))
+
+
+def _native_hover(ctx, sel: str) -> None:
+    ctx.page.locator(sel).hover()
+
+
 @register("browser.click", required=("selector",))
 def _click(spec: StepSpec, ctx) -> None:
     p = spec.params
     sel = ctx.render(p["selector"])
-    if p.get("human", True):
-        ctx._human_mouse.click(sel)
-    else:
-        ctx.page.locator(sel).click(
-            button=p.get("button", "left"),
-            click_count=int(p.get("click_count", 1)),
-        )
+    if p.get("human", True) and ctx._human_mouse is not None:
+        try:
+            ctx._human_mouse.click(sel)
+            return
+        except Exception as e:
+            # HumanMouse uses Firefox internals (windowUtils.sendMouseEvent)
+            # that aren't available on every Firefox build / Camoufox patch
+            # combination. Falling back to native click keeps the flow
+            # functional; user loses anti-detection mouse paths but the
+            # step completes.
+            ctx.logger.warning(
+                f"HumanMouse click failed ({type(e).__name__}: {e}); "
+                f"falling back to native click."
+            )
+    _native_click(ctx, sel, p)
 
 
 @register("browser.type", required=("selector", "text"))
@@ -94,17 +117,29 @@ def _type(spec: StepSpec, ctx) -> None:
     text = ctx.render(p["text"])
     if p.get("clear_first"):
         ctx.page.locator(sel).fill("")
-    if p.get("human", True):
-        ctx._human_keyboard.type_into(sel, text)
-    else:
-        ctx.page.locator(sel).type(text, delay=int(p.get("delay_ms", 0)))
+    if p.get("human", True) and ctx._human_keyboard is not None:
+        try:
+            ctx._human_keyboard.type_into(sel, text)
+            return
+        except Exception as e:
+            ctx.logger.warning(
+                f"HumanKeyboard type failed ({type(e).__name__}: {e}); "
+                f"falling back to native type."
+            )
+    _native_type(ctx, sel, text, p)
 
 
 @register("browser.hover", required=("selector",))
 def _hover(spec: StepSpec, ctx) -> None:
     p = spec.params
     sel = ctx.render(p["selector"])
-    if p.get("human", True):
-        ctx._human_mouse.move_to(sel)
-    else:
-        ctx.page.locator(sel).hover()
+    if p.get("human", True) and ctx._human_mouse is not None:
+        try:
+            ctx._human_mouse.move_to(sel)
+            return
+        except Exception as e:
+            ctx.logger.warning(
+                f"HumanMouse hover failed ({type(e).__name__}: {e}); "
+                f"falling back to native hover."
+            )
+    _native_hover(ctx, sel)
