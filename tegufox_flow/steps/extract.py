@@ -6,7 +6,7 @@ from . import register, StepSpec
 @register("extract.read_text", required=("selector", "set"))
 def _read_text(spec, ctx) -> None:
     sel = ctx.render(spec.params["selector"])
-    text = ctx.page.locator(sel).inner_text()
+    text = ctx.page.locator(sel).first.inner_text()
     ctx.set_var(spec.params["set"], text)
 
 
@@ -14,7 +14,7 @@ def _read_text(spec, ctx) -> None:
 def _read_attr(spec, ctx) -> None:
     sel = ctx.render(spec.params["selector"])
     attr = spec.params["attr"]
-    val = ctx.page.locator(sel).get_attribute(attr)
+    val = ctx.page.locator(sel).first.get_attribute(attr)
     ctx.set_var(spec.params["set"], val)
 
 

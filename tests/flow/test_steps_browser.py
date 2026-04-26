@@ -53,7 +53,7 @@ def test_screenshot_element(ctx):
         ctx,
     )
     ctx.page.locator.assert_called_once_with("#card")
-    locator.screenshot.assert_called_once_with(path="x.png")
+    locator.first.screenshot.assert_called_once_with(path="x.png")
 
 
 def test_press_key_global(ctx):
@@ -73,7 +73,7 @@ def test_press_key_focused(ctx):
                  params={"key": "Tab", "selector": "#x"}),
         ctx,
     )
-    locator.press.assert_called_once_with("Tab")
+    locator.first.press.assert_called_once_with("Tab")
 
 
 def test_scroll_pixels_down(ctx):
@@ -103,7 +103,7 @@ def test_select_option(ctx):
                  params={"selector": "select", "value": "v"}),
         ctx,
     )
-    locator.select_option.assert_called_once_with("v")
+    locator.first.select_option.assert_called_once_with("v")
 
 
 # ---------- Task 15: interactive ----------
@@ -125,7 +125,7 @@ def test_click_non_human(ctx):
                  params={"selector": "#b", "human": False}),
         ctx,
     )
-    locator.click.assert_called_once()
+    locator.first.click.assert_called_once()
 
 
 def test_type_human(ctx):
@@ -147,7 +147,7 @@ def test_type_clear_first(ctx):
                  params={"selector": "#i", "text": "hi", "clear_first": True}),
         ctx,
     )
-    locator.fill.assert_called_once_with("")
+    locator.first.fill.assert_called_once_with("")
     ctx._human_keyboard.type_into.assert_called_once_with("#i", "hi")
 
 
@@ -183,7 +183,7 @@ def test_click_human_falls_back_to_native_on_error():
         ctx,
     )
     ctx._human_mouse.click.assert_called_once_with("#b")
-    locator.click.assert_called_once()
+    locator.first.click.assert_called_once()
 
 
 def test_type_human_falls_back_to_native_on_error():
@@ -206,7 +206,7 @@ def test_type_human_falls_back_to_native_on_error():
         ctx,
     )
     ctx._human_keyboard.type_into.assert_called_once_with("#i", "hi")
-    locator.type.assert_called_once_with("hi", delay=0)
+    locator.first.type.assert_called_once_with("hi", delay=0)
 
 
 def test_click_human_none_uses_native():
@@ -226,7 +226,7 @@ def test_click_human_none_uses_native():
         StepSpec(id="c", type="browser.click", params={"selector": "#b"}),
         ctx,
     )
-    locator.click.assert_called_once()
+    locator.first.click.assert_called_once()
 
 
 def test_wait_for_popup_switches_to_new_page():

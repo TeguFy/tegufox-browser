@@ -16,7 +16,7 @@ def ctx():
 
 def test_read_text(ctx):
     locator = MagicMock()
-    locator.inner_text.return_value = "hello"
+    locator.first.inner_text.return_value = "hello"
     ctx.page.locator.return_value = locator
     handler = get_handler("extract.read_text")
     handler(StepSpec(id="e", type="extract.read_text",
@@ -27,12 +27,12 @@ def test_read_text(ctx):
 
 def test_read_attr(ctx):
     locator = MagicMock()
-    locator.get_attribute.return_value = "/x"
+    locator.first.get_attribute.return_value = "/x"
     ctx.page.locator.return_value = locator
     handler = get_handler("extract.read_attr")
     handler(StepSpec(id="e", type="extract.read_attr",
                      params={"selector": "a", "attr": "href", "set": "h"}), ctx)
-    locator.get_attribute.assert_called_once_with("href")
+    locator.first.get_attribute.assert_called_once_with("href")
     ctx.set_var.assert_called_once_with("h", "/x")
 
 

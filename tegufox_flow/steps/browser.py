@@ -37,7 +37,7 @@ def _screenshot(spec: StepSpec, ctx) -> None:
     p = spec.params
     path = ctx.render(p["path"])
     if "selector" in p:
-        ctx.page.locator(ctx.render(p["selector"])).screenshot(path=path)
+        ctx.page.locator(ctx.render(p["selector"])).first.screenshot(path=path)
     else:
         ctx.page.screenshot(path=path, full_page=bool(p.get("full_page", False)))
 
@@ -46,7 +46,7 @@ def _screenshot(spec: StepSpec, ctx) -> None:
 def _press_key(spec: StepSpec, ctx) -> None:
     p = spec.params
     if "selector" in p:
-        ctx.page.locator(ctx.render(p["selector"])).press(p["key"])
+        ctx.page.locator(ctx.render(p["selector"])).first.press(p["key"])
     else:
         ctx.page.keyboard.press(p["key"])
 
@@ -71,13 +71,15 @@ def _scroll(spec: StepSpec, ctx) -> None:
 
 @register("browser.select_option", required=("selector", "value"))
 def _select_option(spec: StepSpec, ctx) -> None:
-    ctx.page.locator(ctx.render(spec.params["selector"])).select_option(
+    ctx.page.locator(ctx.render(spec.params["selector"])).first.select_option(
         spec.params["value"]
     )
 
 
 def _native_click(ctx, sel: str, p: dict) -> None:
-    ctx.page.locator(sel).click(
+    # `.first` — selector lists matching multiple elements would otherwise
+    # raise strict-mode violation. Always click the first match.
+    ctx.page.locator(sel).first.click(
         button=p.get("button", "left"),
         click_count=int(p.get("click_count", 1)),
         force=bool(p.get("force", False)),
@@ -85,11 +87,11 @@ def _native_click(ctx, sel: str, p: dict) -> None:
 
 
 def _native_type(ctx, sel: str, text: str, p: dict) -> None:
-    ctx.page.locator(sel).type(text, delay=int(p.get("delay_ms", 0)))
+    ctx.page.locator(sel).first.type(text, delay=int(p.get("delay_ms", 0)))
 
 
 def _native_hover(ctx, sel: str) -> None:
-    ctx.page.locator(sel).hover()
+    ctx.page.locator(sel).first.hover()
 
 
 @register("browser.click", required=("selector",))
@@ -119,7 +121,7 @@ def _type(spec: StepSpec, ctx) -> None:
     sel = ctx.render(p["selector"])
     text = ctx.render(p["text"])
     if p.get("clear_first"):
-        ctx.page.locator(sel).fill("")
+        ctx.page.locator(sel).first.fill("")
     if p.get("human", True) and ctx._human_keyboard is not None:
         try:
             ctx._human_keyboard.type_into(sel, text)
