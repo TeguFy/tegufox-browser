@@ -477,8 +477,17 @@ from sqlalchemy.orm import sessionmaker
 from tegufox_core.database import Base, FlowRecord, FlowRun
 from tegufox_flow.dsl import parse_flow
 from tegufox_flow.runtime import run_flow as _run_flow
+from tegufox_flow.orchestrator import Orchestrator, BatchResult
 
 flow_router = APIRouter(prefix="", tags=["flow"])
+
+
+class BatchRequest(BaseModel):
+    profiles: list
+    inputs: dict = {}
+    per_profile_inputs: dict = {}
+    max_concurrent: int = 3
+    fail_fast: bool = False
 
 
 def _flow_db_session():
@@ -608,6 +617,85 @@ def get_run_log(run_id: str):
     if not log.exists():
         return []
     return [_json.loads(line) for line in log.read_text().splitlines() if line.strip()]
+
+
+@flow_router.post("/flows/{name}/batches")
+def post_batch(name: str, body: BatchRequest):
+    s = _flow_db_session()
+    try:
+        rec = s.query(FlowRecord).filter_by(name=name).first()
+        if rec is None:
+            raise HTTPException(404, "flow not found")
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+            f.write(rec.yaml_text); tmp = f.name
+    finally:
+        s.close()
+
+    orch = Orchestrator(
+        flow_path=tmp, db_path=os.environ.get("TEGUFOX_DB", "data/tegufox.db"),
+        max_concurrent=body.max_concurrent, fail_fast=body.fail_fast,
+    )
+    result = orch.run(
+        profiles=body.profiles, inputs=body.inputs,
+        per_profile_inputs=body.per_profile_inputs or None,
+    )
+    return {
+        "batch_id": result.batch_id, "status": result.status,
+        "total": result.total, "succeeded": result.succeeded,
+        "failed": result.failed,
+    }
+
+
+@flow_router.get("/batches")
+def list_batches(limit: int = 20):
+    s = _flow_db_session()
+    try:
+        from tegufox_core.database import FlowBatch
+        rows = (s.query(FlowBatch)
+                .order_by(FlowBatch.started_at.desc())
+                .limit(limit).all())
+        return [{
+            "batch_id": r.batch_id, "status": r.status,
+            "total": r.total, "succeeded": r.succeeded, "failed": r.failed,
+            "started_at": r.started_at.isoformat() if r.started_at else None,
+            "finished_at": r.finished_at.isoformat() if r.finished_at else None,
+        } for r in rows]
+    finally:
+        s.close()
+
+
+@flow_router.get("/batches/{batch_id}")
+def get_batch(batch_id: str):
+    s = _flow_db_session()
+    try:
+        from tegufox_core.database import FlowBatch
+        b = s.query(FlowBatch).filter_by(batch_id=batch_id).first()
+        if b is None:
+            raise HTTPException(404, "not found")
+        return {
+            "batch_id": b.batch_id, "status": b.status,
+            "total": b.total, "succeeded": b.succeeded, "failed": b.failed,
+            "started_at": b.started_at.isoformat() if b.started_at else None,
+            "finished_at": b.finished_at.isoformat() if b.finished_at else None,
+        }
+    finally:
+        s.close()
+
+
+@flow_router.get("/batches/{batch_id}/runs")
+def get_batch_runs(batch_id: str):
+    s = _flow_db_session()
+    try:
+        from tegufox_core.database import FlowRun
+        rows = s.query(FlowRun).filter_by(batch_id=batch_id).all()
+        return [{
+            "run_id": r.run_id, "profile_name": r.profile_name,
+            "status": r.status, "last_step_id": r.last_step_id,
+            "error": r.error_text,
+        } for r in rows]
+    finally:
+        s.close()
 
 
 def create_app():
