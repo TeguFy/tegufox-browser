@@ -78,6 +78,8 @@ def test_dialog_constructs(qapp):
     assert dlg.selected_selector() == ""
     assert not dlg.use_btn.isEnabled()
     assert not dlg.test_btn.isEnabled()
+    # Pick Element button starts disabled until browser opens.
+    assert not dlg.pick_btn.isEnabled()
     # Picked HTML and paste HTML areas exist for debug + detect.
     assert dlg.picked_html_view.toPlainText() == ""
     assert dlg.paste_html_edit.toPlainText() == ""

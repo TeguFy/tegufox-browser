@@ -32,6 +32,7 @@ PICKER_JS = r"""
 (() => {
   if (window.__teguPickerActive) return;
   window.__teguPickerActive = true;
+  window.__teguPickerEnabled = false;   // armed by main thread; auto-disarms after a capture
   window.__teguPickedSelector = null;
   window.__teguPickedHtml = null;
 
@@ -62,31 +63,47 @@ PICKER_JS = r"""
   }
 
   let last = null;
+  function clearLast() {
+    if (last && last.style) last.style.outline = '';
+    last = null;
+  }
+
   document.addEventListener('mouseover', e => {
+    if (!window.__teguPickerEnabled) { clearLast(); return; }
     if (last) last.style.outline = '';
     last = e.target;
     if (last && last.style) last.style.outline = '3px solid red';
   }, true);
 
   document.addEventListener('click', e => {
+    if (!window.__teguPickerEnabled) return;   // armed = capture; idle = pass through
     e.preventDefault();
     e.stopPropagation();
     e.stopImmediatePropagation();
     window.__teguPickedSelector = buildSelector(e.target);
-    // Truncate outerHTML so a giant element doesn't OOM the bridge.
     let html = '';
     try { html = (e.target.outerHTML || '').slice(0, 4000); } catch (_) {}
     window.__teguPickedHtml = html;
     if (last && last.style) last.style.outline = '3px solid limegreen';
+    window.__teguPickerEnabled = false;       // auto-disarm — user re-arms via dialog
   }, true);
 
-  // Visible banner so users know picker mode is active.
+  // Banner reflects current state. updateBanner() polls the flag every
+  // 200 ms which is dirt cheap and avoids a setter trap.
   const banner = document.createElement('div');
-  banner.textContent = 'Tegufox picker — click any element';
-  banner.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#222;color:#fff;'
-    + 'font:14px sans-serif;padding:6px 12px;z-index:2147483647;text-align:center;'
-    + 'border-bottom:2px solid red;';
+  banner.style.cssText = 'position:fixed;top:0;left:0;right:0;color:#fff;'
+    + 'font:14px sans-serif;padding:6px 12px;z-index:2147483647;text-align:center;';
   document.documentElement.appendChild(banner);
+  function updateBanner() {
+    const enabled = window.__teguPickerEnabled;
+    banner.textContent = enabled
+      ? '🎯 Tegufox picker armed — click any element'
+      : '⏸ Tegufox picker idle — interact normally; press “Pick Element” to capture';
+    banner.style.background = enabled ? '#b00020' : '#37474f';
+    banner.style.borderBottom = enabled ? '3px solid #ff4040' : '2px solid #555';
+  }
+  updateBanner();
+  setInterval(updateBanner, 200);
 })();
 """
 
@@ -164,6 +181,10 @@ class _PickerWorker(QThread):
     def request_test_click(self, selector: str) -> None:
         self._actions.put(("test_click", selector))
 
+    def request_arm_picker(self) -> None:
+        """Arm the picker for one capture; auto-disarms after the user clicks."""
+        self._actions.put(("arm", None))
+
     def run(self) -> None:
         try:
             from tegufox_automation import TegufoxSession
@@ -173,13 +194,18 @@ class _PickerWorker(QThread):
                 self.status.emit(f"Navigating to {self.url}…")
                 page.goto(self.url)
                 page.evaluate(PICKER_JS)
-                self.status.emit("Click any element in the browser to capture its selector.")
+                self.status.emit(
+                    "Browser ready. Interact freely; press 'Pick Element' "
+                    "in the dialog when you want to capture a selector."
+                )
                 while not self._stop:
                     try:
                         while True:
                             cmd, arg = self._actions.get_nowait()
                             if cmd == "test_click":
                                 self._do_test_click(page, arg)
+                            elif cmd == "arm":
+                                self._do_arm(page)
                     except queue.Empty:
                         pass
 
@@ -202,6 +228,15 @@ class _PickerWorker(QThread):
                     self.msleep(300)
         except Exception as e:
             self.crashed.emit(f"{type(e).__name__}: {e}")
+
+    def _do_arm(self, page) -> None:
+        try:
+            # Re-inject in case earlier navigation wiped it.
+            page.evaluate(PICKER_JS)
+            page.evaluate("() => { window.__teguPickerEnabled = true; }")
+            self.status.emit("Picker armed — click any element in the browser.")
+        except Exception as e:
+            self.status.emit(f"Failed to arm picker: {type(e).__name__}: {e}")
 
     def _do_test_click(self, page, selector: str) -> None:
         if not selector or not selector.strip():
@@ -246,7 +281,7 @@ class SelectorPickerDialog(QDialog):
 
         layout = QVBoxLayout(self)
 
-        # ---- URL + Profile + Open Browser --------------------------------
+        # ---- URL + Profile + Open Browser + Pick Element -----------------
         url_row = QHBoxLayout()
         url_row.addWidget(QLabel("URL:"))
         self.url_edit = QLineEdit(default_url)
@@ -255,6 +290,14 @@ class SelectorPickerDialog(QDialog):
         self.open_btn = QPushButton("Open Browser")
         self.open_btn.clicked.connect(self._on_open)
         url_row.addWidget(self.open_btn)
+        self.pick_btn = QPushButton("Pick Element")
+        self.pick_btn.setToolTip(
+            "Arm the picker for one click. Use this after you've interacted "
+            "with the page enough that the target element is visible."
+        )
+        self.pick_btn.setEnabled(False)
+        self.pick_btn.clicked.connect(self._on_pick)
+        url_row.addWidget(self.pick_btn)
         layout.addLayout(url_row)
 
         profile_row = QHBoxLayout()
@@ -374,11 +417,18 @@ class SelectorPickerDialog(QDialog):
             return
 
         self.open_btn.setEnabled(False)
+        self.pick_btn.setEnabled(True)
         self._worker = _PickerWorker(profile, url, parent=self)
         self._worker.status.connect(self.status_label.setText)
         self._worker.element_picked.connect(self._on_element_picked)
         self._worker.crashed.connect(self._on_crashed)
         self._worker.start()
+
+    def _on_pick(self) -> None:
+        if self._worker is None or not self._worker.isRunning():
+            self.status_label.setText("Open Browser first.")
+            return
+        self._worker.request_arm_picker()
 
     def _on_element_picked(self, sel: str, html: str) -> None:
         self._selected_selector = sel
