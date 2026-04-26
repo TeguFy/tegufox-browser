@@ -31,7 +31,7 @@ def test_wait_for_visible_default(ctx):
         ctx,
     )
     ctx.page.locator.assert_called_once_with("#x")
-    ctx.page.locator.return_value.wait_for.assert_called_once_with(state="visible", timeout=1000)
+    ctx.page.locator.return_value.first.wait_for.assert_called_once_with(state="visible", timeout=1000)
 
 
 def test_screenshot_full_page(tmp_path, ctx):
