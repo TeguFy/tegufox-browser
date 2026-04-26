@@ -1,0 +1,174 @@
+schema_version: 1
+name: google_then_x_login
+description: |
+  Two-phase login that avoids x.com's volatile selectors.
+
+  PHASE 1 — log in to Google directly at accounts.google.com.
+            Selectors there (#identifierId, #passwordNext, etc.) are
+            stable and well-known. After this, the profile has an
+            active Google session.
+
+  PHASE 2 — go to x.com/i/flow/login and click "Sign in with Google".
+            Because Google session is already active, x.com's OAuth
+            short-circuits: no second password prompt, just a redirect
+            back to x.com authenticated.
+
+  All clicks use force=true and human=false to bypass HumanMouse on
+  Firefox 115 and pointer-event intercepts.
+
+inputs:
+  email:
+    type: string
+    required: true
+  password:
+    type: string
+    required: true
+  out_dir:
+    type: string
+    default: "data/runs/google-x"
+
+defaults:
+  on_error:
+    action: abort
+
+steps:
+  # ===============================================================
+  # PHASE 1 — Google sign-in
+  # ===============================================================
+  - id: open_google_signin
+    type: browser.goto
+    url: "https://accounts.google.com/signin"
+    wait_until: load
+    timeout_ms: 30000
+
+  - id: settle_google_email
+    type: control.sleep
+    ms: 1500
+
+  - id: snap_google_email
+    type: browser.screenshot
+    path: "{{ inputs.out_dir }}/01-google-email.png"
+    full_page: true
+    on_error: { action: skip }
+
+  - id: wait_email_field
+    type: browser.wait_for
+    selector: 'input[type="email"], #identifierId, input[name="identifier"]'
+    state: visible
+    timeout_ms: 30000
+
+  - id: type_email
+    type: browser.type
+    selector: 'input[type="email"], #identifierId, input[name="identifier"]'
+    text: "{{ inputs.email }}"
+    clear_first: true
+    human: false
+
+  - id: click_email_next
+    type: browser.click
+    selector: '#identifierNext, [jsname="LgbsSe"]:has-text("Tiếp theo"), [jsname="LgbsSe"]:has-text("Next"), button:has-text("Tiếp theo"), button:has-text("Next")'
+    human: false
+    force: true
+
+  - id: settle_google_password
+    type: control.sleep
+    ms: 2500
+
+  - id: snap_google_password
+    type: browser.screenshot
+    path: "{{ inputs.out_dir }}/02-google-password.png"
+    full_page: true
+    on_error: { action: skip }
+
+  - id: wait_password_field
+    type: browser.wait_for
+    selector: 'input[type="password"], input[name="Passwd"]'
+    state: visible
+    timeout_ms: 30000
+
+  - id: type_password
+    type: browser.type
+    selector: 'input[type="password"], input[name="Passwd"]'
+    text: "{{ inputs.password }}"
+    clear_first: true
+    human: false
+
+  - id: click_password_next
+    type: browser.click
+    selector: '#passwordNext, [jsname="LgbsSe"]:has-text("Tiếp theo"), [jsname="LgbsSe"]:has-text("Next"), button:has-text("Tiếp theo"), button:has-text("Next")'
+    human: false
+    force: true
+
+  - id: settle_google_postauth
+    type: control.sleep
+    ms: 5000
+
+  - id: snap_google_postauth
+    type: browser.screenshot
+    path: "{{ inputs.out_dir }}/03-google-postauth.png"
+    full_page: true
+    on_error: { action: skip }
+
+  # ===============================================================
+  # PHASE 2 — x.com using the active Google session
+  # ===============================================================
+  - id: open_x_login
+    type: browser.goto
+    url: "https://x.com/i/flow/login"
+    wait_until: load
+    timeout_ms: 30000
+
+  - id: settle_x_login
+    type: control.sleep
+    ms: 2500
+
+  - id: snap_x_login
+    type: browser.screenshot
+    path: "{{ inputs.out_dir }}/04-x-login.png"
+    full_page: true
+    on_error: { action: skip }
+
+  # Override window.open RIGHT before the OAuth click so x.com's own JS
+  # (one-tap rendering, etc.) had a chance to use the original at page
+  # init. With override, window.open(google_oauth_url) becomes a
+  # same-tab navigation, which Playwright tracks naturally.
+  - id: disable_popups_for_oauth
+    type: browser.disable_popups
+
+  - id: click_google_signin
+    type: browser.click
+    selector: '[role="button"]:has-text("Đăng nhập bằng Google"), [role="button"]:has-text("Sign in with Google"), [role="link"]:has-text("Đăng nhập bằng Google"), button:has-text("Đăng nhập bằng Google"), button:has-text("Sign in with Google"), a:has-text("Đăng nhập bằng Google"), div[tabindex]:has-text("Đăng nhập bằng Google"), iframe[src*="accounts.google.com/gsi"], iframe[title*="Google"]'
+    human: false
+    force: true
+    on_error: { action: skip }
+
+  - id: settle_after_oauth_click
+    type: control.sleep
+    ms: 10000
+
+  - id: snap_x_after_oauth
+    type: browser.screenshot
+    path: "{{ inputs.out_dir }}/05-x-after-oauth.png"
+    full_page: true
+    on_error: { action: skip }
+
+  - id: wait_x_home
+    type: browser.wait_for_url
+    url_contains: "x.com/home"
+    timeout_ms: 30000
+    on_error: { action: skip }
+
+  - id: snap_final
+    type: browser.screenshot
+    path: "{{ inputs.out_dir }}/06-x-final.png"
+    full_page: true
+    on_error: { action: skip }
+
+  - id: log_final_url
+    type: extract.url
+    set: final_url
+
+  - id: log_done
+    type: io.log
+    level: info
+    message: "Done. Final URL: {{ vars.final_url }}"
