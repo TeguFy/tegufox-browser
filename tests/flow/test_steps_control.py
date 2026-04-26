@@ -13,6 +13,7 @@ def ctx():
     c.vars = {}
     c.eval.side_effect = lambda expr: eval(expr, {}, {})  # cheap eval for tests
     c.render.side_effect = lambda s: s
+    c.set_var.side_effect = lambda name, value: c.vars.__setitem__(name, value)
     return c
 
 
