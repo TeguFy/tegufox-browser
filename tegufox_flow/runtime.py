@@ -27,6 +27,7 @@ def run_flow(
     db_path: Path = Path("data/tegufox.db"),
     resume: Optional[str] = None,
     resume_from: Optional[str] = None,
+    batch_id: Optional[str] = None,
 ) -> RunResult:
     flow = load_flow(flow_path)
     Session = _session_factory(db_path)
@@ -34,4 +35,5 @@ def run_flow(
     return engine.run(
         flow, inputs=inputs, profile_name=profile_name,
         resume=resume, resume_from=resume_from,
+        batch_id=batch_id,
     )

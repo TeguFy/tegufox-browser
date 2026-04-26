@@ -135,6 +135,7 @@ class FlowEngine:
         profile_name: str,
         resume: Optional[str] = None,
         resume_from: Optional[str] = None,
+        batch_id: Optional[str] = None,
     ) -> RunResult:
         self._validate_inputs(flow, inputs)
         run_id = resume or str(uuid.uuid4())
@@ -161,6 +162,7 @@ class FlowEngine:
                     run_id=run_id, flow_id=fid, profile_name=profile_name,
                     inputs_json=json.dumps(inputs, default=str),
                     status="running", started_at=datetime.utcnow(),
+                    batch_id=batch_id,
                 )
                 s.add(run_row)
             s.commit()
