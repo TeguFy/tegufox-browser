@@ -59,13 +59,16 @@ class FlowsPage(QWidget):
         self.run_btn = QPushButton("Run")
         self.upload_btn = QPushButton("Upload YAML…")
         self.new_btn = QPushButton("New Flow")
+        self.batch_btn = QPushButton("Run Batch…")
         self.run_btn.clicked.connect(self._on_run)
         self.upload_btn.clicked.connect(self._on_upload)
         self.new_btn.clicked.connect(self._on_new_flow)
+        self.batch_btn.clicked.connect(self._on_batch)
         row.addWidget(QLabel("Profile:"))
         row.addWidget(self.profile_combo)
         row.addWidget(self.new_btn)
         row.addWidget(self.upload_btn)
+        row.addWidget(self.batch_btn)
         row.addWidget(self.run_btn)
         layout.addLayout(row)
 
@@ -184,3 +187,32 @@ class FlowsPage(QWidget):
         lo.addWidget(editor)
         dlg.exec()
         self._refresh()
+
+    def _on_batch(self):
+        item = self.list_widget.currentItem()
+        if item is None:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Pick a flow", "Select a flow first.")
+            return
+
+        s = self._session()
+        try:
+            from tegufox_core.database import FlowRecord
+            rec = s.query(FlowRecord).filter_by(name=item.text()).one()
+            flow_yaml = rec.yaml_text
+        finally:
+            s.close()
+
+        profiles = []
+        try:
+            pm = ProfileManager()
+            profiles = [name for name in pm.list()]
+        except Exception:
+            pass
+
+        from tegufox_gui.dialogs.batch_run_dialog import BatchRunDialog
+        dlg = BatchRunDialog(
+            flow_name=item.text(), flow_yaml=flow_yaml,
+            profile_names=profiles, db_path=self._db_path, parent=self,
+        )
+        dlg.exec()
