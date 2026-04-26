@@ -117,3 +117,51 @@ def test_editor_namespace_preserved_verbatim():
     }
     flow = parse_flow(raw)
     assert flow.editor == raw["editor"]
+
+
+import io
+from pathlib import Path
+from tegufox_flow.dsl import load_flow, dump_flow
+
+
+def test_load_flow_from_path(tmp_path: Path):
+    f = tmp_path / "x.yaml"
+    f.write_text(
+        "schema_version: 1\n"
+        "name: x\n"
+        "steps:\n"
+        "  - id: a\n"
+        "    type: control.sleep\n"
+        "    ms: 1\n"
+    )
+    flow = load_flow(f)
+    assert flow.name == "x"
+
+
+def test_dump_preserves_step_order_and_comments(tmp_path: Path):
+    src = (
+        "schema_version: 1\n"
+        "name: x\n"
+        "# top comment\n"
+        "steps:\n"
+        "  - id: first\n"
+        "    type: control.sleep\n"
+        "    ms: 1  # inline\n"
+        "  - id: second\n"
+        "    type: control.sleep\n"
+        "    ms: 2\n"
+    )
+    f = tmp_path / "src.yaml"
+    f.write_text(src)
+    out = tmp_path / "out.yaml"
+    raw = load_flow(f, raw=True)
+    dump_flow(raw, out)
+    text = out.read_text()
+    assert "# top comment" in text
+    assert "# inline" in text
+    assert text.index("first") < text.index("second")
+
+
+def test_load_flow_missing_file_raises(tmp_path: Path):
+    with pytest.raises(FileNotFoundError):
+        load_flow(tmp_path / "nope.yaml")

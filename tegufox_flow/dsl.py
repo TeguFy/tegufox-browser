@@ -131,3 +131,43 @@ def parse_flow(data: Dict[str, Any]) -> Flow:
     if problems:
         raise ValidationError(problems)
     return flow
+
+
+from pathlib import Path
+from typing import Union
+from ruamel.yaml import YAML
+
+_YAML_RT = YAML(typ="rt")
+_YAML_RT.preserve_quotes = True
+_YAML_RT.indent(mapping=2, sequence=4, offset=2)
+
+
+def load_flow(path: Union[str, Path], *, raw: bool = False):
+    """Load a flow from disk.
+
+    raw=False (default) → returns a parsed Flow (Pydantic).
+    raw=True → returns the ruamel.yaml CommentedMap, suitable for dump_flow.
+    """
+    p = Path(path)
+    with p.open("r", encoding="utf-8") as fh:
+        data = _YAML_RT.load(fh)
+    if raw:
+        return data
+    return parse_flow(_to_plain(data))
+
+
+def dump_flow(data, path: Union[str, Path]) -> None:
+    """Write a CommentedMap (from load_flow(..., raw=True)) preserving comments."""
+    p = Path(path)
+    with p.open("w", encoding="utf-8") as fh:
+        _YAML_RT.dump(data, fh)
+
+
+def _to_plain(obj):
+    """Recursively convert ruamel CommentedMap/Seq into plain dict/list."""
+    from ruamel.yaml.comments import CommentedMap, CommentedSeq
+    if isinstance(obj, CommentedMap):
+        return {k: _to_plain(v) for k, v in obj.items()}
+    if isinstance(obj, CommentedSeq):
+        return [_to_plain(v) for v in obj]
+    return obj

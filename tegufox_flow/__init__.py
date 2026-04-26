@@ -8,8 +8,11 @@ from .errors import (
     ValidationError, StepError, FlowError,
     BreakSignal, ContinueSignal, GotoSignal,
 )
+from .dsl import Flow, Step, Input, OnError, parse_flow, load_flow, dump_flow
 
 __all__ = [
     "ValidationError", "StepError", "FlowError",
     "BreakSignal", "ContinueSignal", "GotoSignal",
+    "Flow", "Step", "Input", "OnError",
+    "parse_flow", "load_flow", "dump_flow",
 ]
