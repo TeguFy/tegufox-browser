@@ -144,11 +144,56 @@ steps:
 
   - id: settle_after_oauth_click
     type: control.sleep
-    ms: 10000
+    ms: 4000
+
+  - id: snap_account_chooser
+    type: browser.screenshot
+    path: "{{ inputs.out_dir }}/05-account-chooser.png"
+    full_page: true
+    on_error: { action: skip }
+
+  # Google "Choose an account" — click the row matching the email.
+  # The row is typically a div[role=link] / li with the email text.
+  - id: wait_account_row
+    type: browser.wait_for
+    selector: '[data-identifier="{{ inputs.email }}"], [data-email="{{ inputs.email }}"], div[role="link"]:has-text("{{ inputs.email }}"), li:has-text("{{ inputs.email }}"), [aria-label*="{{ inputs.email }}"]'
+    state: visible
+    timeout_ms: 20000
+    on_error: { action: skip }
+
+  - id: click_account_row
+    type: browser.click
+    selector: '[data-identifier="{{ inputs.email }}"], [data-email="{{ inputs.email }}"], div[role="link"]:has-text("{{ inputs.email }}"), li:has-text("{{ inputs.email }}"), [aria-label*="{{ inputs.email }}"]'
+    human: false
+    force: true
+    on_error: { action: skip }
+
+  - id: settle_after_account_click
+    type: control.sleep
+    ms: 3500
+
+  - id: snap_consent
+    type: browser.screenshot
+    path: "{{ inputs.out_dir }}/06-consent.png"
+    full_page: true
+    on_error: { action: skip }
+
+  # Google consent screen — click "Continue" / "Tiếp tục" / "Allow" if it appears.
+  # Some apps skip consent for trusted accounts; on_error skip handles that.
+  - id: click_continue_consent
+    type: browser.click
+    selector: 'button:has-text("Continue"), button:has-text("Tiếp tục"), button:has-text("Allow"), button:has-text("Cho phép"), [jsname="LgbsSe"]:has-text("Continue"), [jsname="LgbsSe"]:has-text("Tiếp tục"), [role="button"]:has-text("Continue"), [role="button"]:has-text("Tiếp tục")'
+    human: false
+    force: true
+    on_error: { action: skip }
+
+  - id: settle_after_consent
+    type: control.sleep
+    ms: 6000
 
   - id: snap_x_after_oauth
     type: browser.screenshot
-    path: "{{ inputs.out_dir }}/05-x-after-oauth.png"
+    path: "{{ inputs.out_dir }}/07-x-after-oauth.png"
     full_page: true
     on_error: { action: skip }
 
@@ -160,7 +205,7 @@ steps:
 
   - id: snap_final
     type: browser.screenshot
-    path: "{{ inputs.out_dir }}/06-x-final.png"
+    path: "{{ inputs.out_dir }}/08-x-final.png"
     full_page: true
     on_error: { action: skip }
 
