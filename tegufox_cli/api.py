@@ -474,7 +474,7 @@ from pydantic import BaseModel
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from tegufox_core.database import Base, FlowRecord, FlowRun
+from tegufox_core.database import Base, ensure_schema, FlowRecord, FlowRun
 from tegufox_flow.dsl import parse_flow
 from tegufox_flow.runtime import run_flow as _run_flow
 from tegufox_flow.orchestrator import Orchestrator, BatchResult
@@ -494,6 +494,8 @@ def _flow_db_session():
     db_path = os.environ.get("TEGUFOX_DB", "data/tegufox.db")
     eng = create_engine(f"sqlite:///{Path(db_path).resolve()}")
     Base.metadata.create_all(eng)
+
+    ensure_schema(eng)
     return sessionmaker(bind=eng)()
 
 

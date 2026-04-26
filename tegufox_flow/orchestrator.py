@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from tegufox_core.database import Base, FlowBatch, FlowRecord
+from tegufox_core.database import Base, ensure_schema, FlowBatch, FlowRecord
 from .dsl import load_flow
 from .engine import RunResult
 from .runtime import run_flow
@@ -98,6 +98,7 @@ class Orchestrator:
         # FlowRun referencing the batch_id.
         with Session() as s:
             Base.metadata.create_all(s.get_bind())
+            ensure_schema(s.get_bind())
             fid = s.query(FlowRecord.id).filter_by(name=flow.name).scalar()
             if fid is None:
                 rec = FlowRecord(

@@ -102,10 +102,12 @@ def _batch_cmd(args) -> int:
     if args.batch_cmd == "ls":
         from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
-        from tegufox_core.database import Base, FlowBatch, FlowRecord
+        from tegufox_core.database import Base, ensure_schema, FlowBatch, FlowRecord
 
         eng = create_engine(f"sqlite:///{Path('data/tegufox.db').resolve()}")
         Base.metadata.create_all(eng)
+
+        ensure_schema(eng)
         s = sessionmaker(bind=eng)()
         try:
             q = (s.query(FlowBatch, FlowRecord)
@@ -121,10 +123,12 @@ def _batch_cmd(args) -> int:
     if args.batch_cmd == "show":
         from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
-        from tegufox_core.database import Base, FlowBatch, FlowRun, FlowRecord
+        from tegufox_core.database import Base, ensure_schema, FlowBatch, FlowRun, FlowRecord
 
         eng = create_engine(f"sqlite:///{Path('data/tegufox.db').resolve()}")
         Base.metadata.create_all(eng)
+
+        ensure_schema(eng)
         s = sessionmaker(bind=eng)()
         try:
             b = s.query(FlowBatch).filter_by(batch_id=args.batch_id).first()
@@ -192,10 +196,12 @@ def run_cli(argv: Optional[List[str]] = None) -> int:
 def _runs_cmd(args) -> int:
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
-    from tegufox_core.database import Base, FlowRun, FlowRecord
+    from tegufox_core.database import Base, ensure_schema, FlowRun, FlowRecord
 
     eng = create_engine(f"sqlite:///{Path('data/tegufox.db').resolve()}")
     Base.metadata.create_all(eng)
+
+    ensure_schema(eng)
     s = sessionmaker(bind=eng)()
     try:
         if args.runs_cmd == "ls":

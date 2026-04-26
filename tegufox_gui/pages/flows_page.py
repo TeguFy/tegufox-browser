@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from tegufox_core.database import Base, FlowRecord
+from tegufox_core.database import Base, ensure_schema, FlowRecord
 from tegufox_core.profile_manager import ProfileManager
 from tegufox_flow.dsl import parse_flow
 from tegufox_flow.runtime import run_flow
@@ -82,6 +82,8 @@ class FlowsPage(QWidget):
     def _session(self):
         eng = create_engine(f"sqlite:///{Path(self._db_path).resolve()}")
         Base.metadata.create_all(eng)
+
+        ensure_schema(eng)
         return sessionmaker(bind=eng)()
 
     def _refresh(self):

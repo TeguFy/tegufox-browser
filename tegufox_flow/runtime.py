@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from tegufox_core.database import Base
+from tegufox_core.database import Base, ensure_schema
 
 from .dsl import load_flow
 from .engine import FlowEngine, RunResult
@@ -16,6 +16,8 @@ from .engine import FlowEngine, RunResult
 def _session_factory(db_path: Path):
     eng = create_engine(f"sqlite:///{db_path.resolve()}")
     Base.metadata.create_all(eng)
+
+    ensure_schema(eng)
     return sessionmaker(bind=eng)
 
 

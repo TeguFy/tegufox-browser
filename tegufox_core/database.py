@@ -33,6 +33,47 @@ from pathlib import Path
 Base = declarative_base()
 
 
+# ---------------------------------------------------------------------------
+# Schema migrations for SQLite
+# ---------------------------------------------------------------------------
+# Base.metadata.create_all() only creates *missing* tables; it does NOT
+# ALTER existing tables to add new columns. When we add a column to an
+# existing model (e.g. flow_runs.batch_id added in sub-project #2) databases
+# created before that change have a stale schema. ensure_schema() applies
+# additive migrations idempotently: detect missing columns via inspection
+# and ALTER TABLE ADD COLUMN. SQLite cannot add FK constraints via ALTER,
+# but we don't enforce FKs at runtime so a plain column suffices.
+
+def ensure_schema(engine) -> None:
+    """Apply additive schema migrations on top of create_all().
+
+    Safe to call multiple times. Currently handles:
+      - flow_runs.batch_id (added by sub-project #2)
+    """
+    from sqlalchemy import inspect
+
+    insp = inspect(engine)
+    table_names = set(insp.get_table_names())
+
+    if "flow_runs" in table_names:
+        cols = {c["name"] for c in insp.get_columns("flow_runs")}
+        if "batch_id" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE flow_runs ADD COLUMN batch_id VARCHAR(64)"
+                ))
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_flow_runs_batch_id "
+                    "ON flow_runs(batch_id)"
+                ))
+
+
+def create_all_and_migrate(engine) -> None:
+    """create_all() + ensure_schema() in one call. Use this everywhere."""
+    Base.metadata.create_all(engine)
+    ensure_schema(engine)
+
+
 class Profile(Base):
     """Main profile table"""
 
