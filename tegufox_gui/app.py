@@ -34,6 +34,7 @@ from tegufox_gui.pages import (
     SettingsWidget,
     ProxiesWidget,
 )
+from tegufox_gui.pages.flows_page import FlowsPage
 
 
 class TegufoxProfileManager(QMainWindow):
@@ -83,6 +84,9 @@ class TegufoxProfileManager(QMainWindow):
 
         self.settings_page = SettingsWidget()
         self.content_stack.addWidget(self.settings_page)
+
+        self.flows_page = FlowsPage()
+        self.content_stack.addWidget(self.flows_page)
 
     def create_sidebar(self):
         """Create compact sidebar with navigation"""
@@ -138,6 +142,11 @@ class TegufoxProfileManager(QMainWindow):
         sessions_btn.clicked.connect(lambda: self.switch_page(1))
         layout.addWidget(sessions_btn)
         self.nav_buttons.append(sessions_btn)
+
+        flows_btn = SidebarButton("Flows", "▶")
+        flows_btn.clicked.connect(lambda: self.switch_page(6))
+        layout.addWidget(flows_btn)
+        self.nav_buttons.append(flows_btn)
 
         proxies_btn = SidebarButton("Proxies", "🔌")
         proxies_btn.clicked.connect(lambda: self.switch_page(4))
