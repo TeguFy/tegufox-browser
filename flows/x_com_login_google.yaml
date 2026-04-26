@@ -52,17 +52,28 @@ steps:
   # -----------------------------------------------------------------
   # Step 2: on /login, click "Sign in with Google"
   # -----------------------------------------------------------------
-  # x.com renders the Google SSO button in a div with role=button. The
-  # exact selector drifts; common candidates below — pick yours via the
-  # editor's Pick Element button if these don't match.
+  # IMPORTANT — x.com renders Google SSO via Google Identity Services
+  # which uses a cross-origin iframe. The exact wrapper selector drifts
+  # weekly. Three strategies are tried in order via comma fallback;
+  # Playwright's `:has-text()` matches innerText reliably across DOM
+  # rewrites. If ALL of these miss, USE THE PICK ELEMENT BUTTON in the
+  # editor to capture today's correct selector.
+  - id: pre_google_screenshot
+    type: browser.screenshot
+    path: "{{ inputs.out_dir }}/01-before-google.png"
+    full_page: true
+    on_error:
+      action: skip
+
   - id: wait_google_btn
     type: browser.wait_for
-    selector: 'div[role="button"][data-testid*="google"], div[aria-label*="Google"]'
-    timeout_ms: 15000
+    selector: 'div[role="button"]:has-text("Sign in with Google"), button:has-text("Sign in with Google"), iframe[src*="accounts.google.com/gsi"], iframe[title*="Google"]'
+    timeout_ms: 20000
 
   - id: click_google_signin
     type: browser.click
-    selector: 'div[role="button"][data-testid*="google"], div[aria-label*="Google"]'
+    selector: 'div[role="button"]:has-text("Sign in with Google"), button:has-text("Sign in with Google"), iframe[src*="accounts.google.com/gsi"], iframe[title*="Google"]'
+    human: false
 
   # -----------------------------------------------------------------
   # Step 3: wait for Google OAuth — works for both same-tab redirect
