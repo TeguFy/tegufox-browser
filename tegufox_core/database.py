@@ -369,6 +369,59 @@ class Proxy(Base):
         return result
 
 
+class FlowRecord(Base):
+    """Flow definition record"""
+
+    __tablename__ = "flows"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(255), unique=True, nullable=False, index=True)
+    description = Column(Text)
+    yaml_text = Column(Text, nullable=False)
+    schema_version = Column(Integer, nullable=False, default=1)
+    created_at = Column(DateTime, nullable=False)
+    updated_at = Column(DateTime, nullable=False)
+
+
+class FlowRun(Base):
+    """Flow execution record"""
+
+    __tablename__ = "flow_runs"
+
+    run_id = Column(String(64), primary_key=True)
+    flow_id = Column(Integer, ForeignKey("flows.id"), nullable=False, index=True)
+    profile_name = Column(String(255), nullable=False, index=True)
+    inputs_json = Column(Text, nullable=False, default="{}")
+    status = Column(String(32), nullable=False, default="running", index=True)
+    started_at = Column(DateTime, nullable=False)
+    finished_at = Column(DateTime)
+    last_step_id = Column(String(255))
+    error_text = Column(Text)
+
+
+class FlowCheckpoint(Base):
+    """Flow execution checkpoint/state snapshot"""
+
+    __tablename__ = "flow_checkpoints"
+
+    run_id = Column(String(64), primary_key=True)
+    seq = Column(Integer, primary_key=True)
+    step_id = Column(String(255), nullable=False)
+    vars_json = Column(Text, nullable=False, default="{}")
+    created_at = Column(DateTime, nullable=False)
+
+
+class FlowKVState(Base):
+    """Flow key-value state storage"""
+
+    __tablename__ = "flow_kv_state"
+
+    flow_name = Column(String(255), primary_key=True)
+    key = Column(String(255), primary_key=True)
+    value_json = Column(Text, nullable=False)
+    updated_at = Column(DateTime, nullable=False)
+
+
 class ProfileDatabase:
     """Database manager for profiles"""
 
