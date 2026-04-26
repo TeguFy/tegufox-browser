@@ -66,27 +66,31 @@ steps:
     on_error:
       action: skip
 
-  # If the profile is already logged into Google, x.com shows a "One Tap"
-  # iframe-popup at the top-right offering a one-click sign-in. It hovers
-  # over the page and steals selectors / clicks. Dismiss it with Escape
-  # before targeting the main form button.
-  - id: dismiss_one_tap
-    type: browser.press_key
-    key: Escape
+  # NOTE about Escape and One Tap:
+  # We tried pressing Escape to dismiss Google One Tap, but on x.com's
+  # /i/flow/login route Escape ALSO closes the whole login modal and
+  # navigates back. Skip that — the :has-text engine doesn't pierce
+  # cross-origin iframes anyway, so the One Tap iframe is naturally
+  # invisible to our selectors. Just settle a moment for the page to
+  # render and target the main button.
+
+  - id: settle_login_page
+    type: control.sleep
+    ms: 1500
+
+  - id: pre_google_button_screenshot
+    type: browser.screenshot
+    path: "{{ inputs.out_dir }}/01b-login-modal.png"
+    full_page: true
     on_error:
       action: skip
 
-  - id: settle_after_dismiss
-    type: control.sleep
-    ms: 800
-
-  # The :has-text engine searches only the top-level document, NOT inside
-  # cross-origin iframes — so the Google One Tap iframe is naturally
-  # excluded; no need for [role="dialog"] scoping.
+  # text= is Playwright's text engine — matches an element whose text
+  # CONTENT is exactly that string. Most reliable across DOM rewrites.
   - id: wait_google_btn
     type: browser.wait_for
-    selector: '[role="button"]:has-text("Đăng nhập bằng Google"), [role="button"]:has-text("Sign in with Google"), [role="button"]:has-text("Continue with Google"), button:has-text("Đăng nhập bằng Google"), button:has-text("Sign in with Google")'
-    timeout_ms: 20000
+    selector: 'text="Đăng nhập bằng Google", text="Sign in with Google", text="Continue with Google", [role="button"]:has-text("Google"), button:has-text("Google")'
+    timeout_ms: 30000
 
   # -----------------------------------------------------------------
   # Step 2b: click Google + capture popup atomically.
@@ -98,7 +102,7 @@ steps:
   # -----------------------------------------------------------------
   - id: click_google_signin
     type: browser.click_and_wait_popup
-    selector: '[role="button"]:has-text("Đăng nhập bằng Google"), [role="button"]:has-text("Sign in with Google"), [role="button"]:has-text("Continue with Google"), button:has-text("Đăng nhập bằng Google"), button:has-text("Sign in with Google")'
+    selector: 'text="Đăng nhập bằng Google", text="Sign in with Google", text="Continue with Google", [role="button"]:has-text("Google"), button:has-text("Google")'
     timeout_ms: 30000
     force: true
 
