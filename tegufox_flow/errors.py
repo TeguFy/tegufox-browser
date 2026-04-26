@@ -7,7 +7,7 @@ FlowError is the terminal run failure surfaced to callers.
 Break/Continue/Goto are control-flow signals (not errors) used inside loops.
 """
 
-from typing import List, Optional
+from typing import List
 
 
 class FlowEngineException(Exception):
