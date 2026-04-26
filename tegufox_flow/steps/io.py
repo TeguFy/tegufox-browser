@@ -52,6 +52,42 @@ def _read_file(spec: StepSpec, ctx) -> None:
     ctx.set_var(spec.params["set"], out)
 
 
+@register("io.record", required=("path", "data"))
+def _record(spec: StepSpec, ctx) -> None:
+    """Append a structured row to a CSV or JSONL file. Useful for logging
+    each generated identity (random_email, random_phone, …) per run.
+
+    format: 'csv' (default) or 'jsonl'.
+    Values in `data` are Jinja-rendered if they're strings.
+    """
+    p = spec.params
+    path = Path(ctx.render(p["path"]))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fmt = (p.get("format") or "csv").lower()
+    raw_data = p.get("data") or {}
+
+    rendered: Dict[str, Any] = {}
+    for k, v in raw_data.items():
+        if isinstance(v, str):
+            rendered[k] = ctx.render(v)
+        else:
+            rendered[k] = v
+
+    if fmt == "csv":
+        is_new = not path.exists() or path.stat().st_size == 0
+        with path.open("a", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=list(rendered.keys()))
+            if is_new:
+                writer.writeheader()
+            writer.writerow(rendered)
+    elif fmt == "jsonl":
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(rendered, ensure_ascii=False, default=str) + "\n")
+    else:
+        raise ValueError(f"unknown record format {fmt!r}; use 'csv' or 'jsonl'")
+    ctx.logger.info(f"recorded row → {path}")
+
+
 @register("io.http_request", required=("method", "url"))
 def _http_request(spec: StepSpec, ctx) -> None:
     p = spec.params

@@ -90,3 +90,49 @@ def test_http_request_get(ctx):
     assert saved["status"] == 200
     assert saved["body"] == "ok"
     assert saved["json"] == {"k": "v"}
+
+
+def test_io_record_csv_writes_header_then_rows(tmp_path, ctx):
+    import csv
+    from tegufox_flow.steps import StepSpec, get_handler
+    p = tmp_path / "out.csv"
+    handler = get_handler("io.record")
+
+    handler(StepSpec(id="r1", type="io.record",
+                     params={"path": str(p), "format": "csv",
+                             "data": {"email": "a@x.com", "phone": "0123"}}), ctx)
+    handler(StepSpec(id="r2", type="io.record",
+                     params={"path": str(p), "format": "csv",
+                             "data": {"email": "b@x.com", "phone": "0456"}}), ctx)
+
+    rows = list(csv.DictReader(p.open()))
+    assert len(rows) == 2
+    assert rows[0]["email"] == "a@x.com"
+    assert rows[1]["phone"] == "0456"
+
+
+def test_io_record_jsonl(tmp_path, ctx):
+    import json as _json
+    from tegufox_flow.steps import StepSpec, get_handler
+    p = tmp_path / "out.jsonl"
+    handler = get_handler("io.record")
+    handler(StepSpec(id="r", type="io.record",
+                     params={"path": str(p), "format": "jsonl",
+                             "data": {"k": "v", "n": 1}}), ctx)
+    line = p.read_text().splitlines()[0]
+    assert _json.loads(line) == {"k": "v", "n": 1}
+
+
+def test_io_record_renders_jinja_in_values(tmp_path, ctx):
+    import csv
+    from tegufox_flow.steps import StepSpec, get_handler
+    ctx.render.side_effect = lambda s: s.replace("{{ vars.x }}", "rendered")
+    p = tmp_path / "r.csv"
+    get_handler("io.record")(
+        StepSpec(id="r", type="io.record",
+                 params={"path": str(p), "format": "csv",
+                         "data": {"col": "{{ vars.x }}"}}),
+        ctx,
+    )
+    rows = list(csv.DictReader(p.open()))
+    assert rows[0]["col"] == "rendered"

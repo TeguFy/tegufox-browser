@@ -163,6 +163,43 @@ def _all_pages_across_contexts(main_page) -> list:
     return pages
 
 
+@register("browser.save_cookies", required=("path",))
+def _save_cookies(spec: StepSpec, ctx) -> None:
+    """Export browser-context cookies to a JSON file. Useful at the end of
+    a successful login flow so the same session can be replayed without
+    re-typing credentials.
+
+    Optional `domain_contains` filters by cookie.domain substring (e.g.
+    'google.com' to skip unrelated trackers).
+    """
+    import json as _json
+    from pathlib import Path as _Path
+    p = spec.params
+    path = _Path(ctx.render(p["path"]))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    needle = (p.get("domain_contains") or "").strip()
+    cookies = ctx.page.context.cookies()
+    if needle:
+        cookies = [c for c in cookies if needle in (c.get("domain") or "")]
+    with path.open("w", encoding="utf-8") as f:
+        _json.dump(cookies, f, indent=2, ensure_ascii=False)
+    ctx.logger.info(f"saved {len(cookies)} cookies to {path}")
+
+
+@register("browser.load_cookies", required=("path",))
+def _load_cookies(spec: StepSpec, ctx) -> None:
+    """Pre-populate the browser context with cookies from a JSON file
+    written by browser.save_cookies. Call BEFORE the first browser.goto
+    against the cookie's domain."""
+    import json as _json
+    from pathlib import Path as _Path
+    path = _Path(ctx.render(spec.params["path"]))
+    with path.open("r", encoding="utf-8") as f:
+        cookies = _json.load(f)
+    ctx.page.context.add_cookies(cookies)
+    ctx.logger.info(f"loaded {len(cookies)} cookies from {path}")
+
+
 @register("browser.disable_popups")
 def _disable_popups(spec: StepSpec, ctx) -> None:
     """Override window.open so popups become same-tab redirects.

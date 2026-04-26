@@ -89,6 +89,16 @@ STEP_FORM: dict = {
         Field("selector", "string", placeholder="(optional) focus this first"),
     ],
     "browser.disable_popups": [],
+    "browser.save_cookies": [
+        Field("path", "string", required=True,
+              placeholder="data/cookies/{{ profile_name }}.json"),
+        Field("domain_contains", "string",
+              placeholder="(optional) e.g. google.com"),
+    ],
+    "browser.load_cookies": [
+        Field("path", "string", required=True,
+              placeholder="data/cookies/{{ profile_name }}.json"),
+    ],
     "browser.click_and_wait_popup": [
         Field("selector", "string", required=True,
               placeholder="selector that triggers window.open"),
@@ -179,6 +189,14 @@ STEP_FORM: dict = {
         Field("set", "string", required=True),
         Field("format", "select", choices=["text", "json", "csv"], default="text"),
         Field("encoding", "string", default="utf-8"),
+    ],
+    "io.record": [
+        Field("path", "string", required=True,
+              placeholder="data/registrations.csv"),
+        Field("format", "select", choices=["csv", "jsonl"], default="csv"),
+        Field("data", "code", required=True, multiline=True,
+              placeholder='{"email": "{{ vars.email }}", "phone": "{{ vars.phone }}"}',
+              help="YAML/JSON map of column → value (values are Jinja-rendered)"),
     ],
     "io.http_request": [
         Field("method", "select", required=True,

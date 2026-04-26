@@ -68,3 +68,46 @@ def test_undefined_var_raises(eng):
 
 def test_render_keeps_strings_without_templates(eng):
     assert eng.render("plain text", {}) == "plain text"
+
+
+def test_random_email_with_domain(eng):
+    out = eng.eval("random_email('hejito.com')", {})
+    assert out.endswith("@hejito.com")
+    assert "@" in out
+
+
+def test_random_email_default(eng):
+    out = eng.eval("random_email()", {})
+    assert "@" in out
+
+
+def test_random_phone_vn_format(eng):
+    p = eng.eval("random_phone('vn')", {})
+    assert p.startswith("0")
+    assert len(p) == 10
+    assert p.isdigit()
+
+
+def test_random_name_returns_string(eng):
+    n = eng.eval("random_name()", {})
+    assert isinstance(n, str) and len(n) > 0
+
+
+def test_random_username_has_digits(eng):
+    u = eng.eval("random_username()", {})
+    assert any(c.isdigit() for c in u)
+
+
+def test_random_password_length(eng):
+    p = eng.eval("random_password(16)", {})
+    assert len(p) == 16
+
+
+def test_random_string_charset_digits(eng):
+    s = eng.eval("random_string(10, 'digits')", {})
+    assert s.isdigit() and len(s) == 10
+
+
+def test_random_choice(eng):
+    c = eng.eval("random_choice(['a','b','c'])", {})
+    assert c in ['a', 'b', 'c']
