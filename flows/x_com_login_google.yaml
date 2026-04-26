@@ -86,41 +86,67 @@ steps:
     timeout_ms: 30000
 
   # -----------------------------------------------------------------
-  # Step 4: enter email in the popup
+  # Step 4: settle into popup, then enter email.
+  # Google v3 uses input[type=email] as the primary identifier; older
+  # forms use #identifierId. Multi-locale: button labels include
+  # "Next" (en), "Tiếp theo" (vi), etc. — use :has-text fallbacks.
   # -----------------------------------------------------------------
+  - id: post_popup_settle
+    type: control.sleep
+    ms: 2000
+
+  - id: pre_email_screenshot
+    type: browser.screenshot
+    path: "{{ inputs.out_dir }}/02-popup-email-page.png"
+    full_page: true
+    on_error:
+      action: skip
+
   - id: wait_email_field
     type: browser.wait_for
-    selector: '#identifierId'
-    timeout_ms: 15000
+    selector: 'input[type="email"], #identifierId, input[name="identifier"]'
+    state: visible
+    timeout_ms: 30000
 
   - id: type_email
     type: browser.type
-    selector: '#identifierId'
+    selector: 'input[type="email"], #identifierId, input[name="identifier"]'
     text: "{{ inputs.email }}"
     clear_first: true
+    human: false
 
   - id: click_email_next
     type: browser.click
-    selector: '#identifierNext'
+    selector: '#identifierNext, button:has-text("Tiếp theo"), button:has-text("Next"), [jsname="LgbsSe"]'
+    human: false
 
   # -----------------------------------------------------------------
   # Step 5: enter password
   # -----------------------------------------------------------------
+  - id: pre_password_screenshot
+    type: browser.screenshot
+    path: "{{ inputs.out_dir }}/03-popup-password-page.png"
+    full_page: true
+    on_error:
+      action: skip
+
   - id: wait_password_field
     type: browser.wait_for
-    selector: 'input[type="password"][name="Passwd"]'
+    selector: 'input[type="password"], input[name="Passwd"]'
     state: visible
-    timeout_ms: 20000
+    timeout_ms: 30000
 
   - id: type_password
     type: browser.type
-    selector: 'input[type="password"][name="Passwd"]'
+    selector: 'input[type="password"], input[name="Passwd"]'
     text: "{{ inputs.password }}"
     clear_first: true
+    human: false
 
   - id: click_password_next
     type: browser.click
-    selector: '#passwordNext'
+    selector: '#passwordNext, button:has-text("Tiếp theo"), button:has-text("Next"), [jsname="LgbsSe"]'
+    human: false
 
   # -----------------------------------------------------------------
   # Step 6: wait for the popup to close, then switch back to x.com
