@@ -67,12 +67,12 @@ steps:
 
   - id: wait_google_btn
     type: browser.wait_for
-    selector: 'div[role="button"]:has-text("Sign in with Google"), button:has-text("Sign in with Google"), iframe[src*="accounts.google.com/gsi"], iframe[title*="Google"]'
+    selector: '[role="button"]:has-text("Đăng nhập bằng Google"), [role="button"]:has-text("Sign in with Google"), [role="button"]:has-text("Continue with Google"), button:has-text("Đăng nhập bằng Google"), button:has-text("Sign in with Google"), iframe[src*="accounts.google.com/gsi"], iframe[title*="Google"]'
     timeout_ms: 20000
 
   - id: click_google_signin
     type: browser.click
-    selector: 'div[role="button"]:has-text("Sign in with Google"), button:has-text("Sign in with Google"), iframe[src*="accounts.google.com/gsi"], iframe[title*="Google"]'
+    selector: '[role="button"]:has-text("Đăng nhập bằng Google"), [role="button"]:has-text("Sign in with Google"), [role="button"]:has-text("Continue with Google"), button:has-text("Đăng nhập bằng Google"), button:has-text("Sign in with Google"), iframe[src*="accounts.google.com/gsi"], iframe[title*="Google"]'
     human: false
 
   # -----------------------------------------------------------------
