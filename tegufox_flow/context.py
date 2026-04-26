@@ -51,6 +51,7 @@ class FlowContext:
     env_allowlist: Set[str] = field(default_factory=set)
     _human_mouse: Any = None        # HumanMouse, lazily initialised
     _human_keyboard: Any = None     # HumanKeyboard, lazily initialised
+    _original_page: Any = None      # set on engine.run; switch_to_main restores it
     current_step_id: Optional[str] = None
     logger: logging.Logger = field(default_factory=lambda: _LOG)
 

@@ -227,3 +227,93 @@ def test_click_human_none_uses_native():
         ctx,
     )
     locator.click.assert_called_once()
+
+
+def test_wait_for_popup_switches_to_new_page():
+    from unittest.mock import MagicMock
+    import logging
+    from tegufox_flow.steps import StepSpec, get_handler
+
+    main = MagicMock()
+    popup = MagicMock(); popup.url = "https://accounts.google.com/oauth"
+    main.context.pages = [main, popup]   # popup already open at step start
+
+    ctx = MagicMock()
+    ctx.page = main
+    ctx._original_page = main
+    ctx.logger = logging.getLogger("test_popup")
+    ctx.render.side_effect = lambda s: s
+
+    # Initial seen set should contain BOTH pages (since both were present),
+    # so the step should time out — verify with a tight timeout.
+    import pytest
+    with pytest.raises(RuntimeError) as e:
+        get_handler("browser.wait_for_popup")(
+            StepSpec(id="w", type="browser.wait_for_popup",
+                     params={"url_contains": "google", "timeout_ms": 100}),
+            ctx,
+        )
+    assert "no popup" in str(e.value)
+
+
+def test_wait_for_popup_picks_up_new_page():
+    from unittest.mock import MagicMock
+    import logging
+    from tegufox_flow.steps import StepSpec, get_handler
+
+    main = MagicMock()
+    main.context.pages = [main]   # only main at start
+
+    popup = MagicMock(); popup.url = "https://accounts.google.com/oauth"
+
+    ctx = MagicMock()
+    ctx.page = main
+    ctx._original_page = main
+    ctx.logger = logging.getLogger("test_popup")
+
+    # Simulate popup appearing on the 2nd context.pages access.
+    accesses = {"n": 0}
+    def get_pages():
+        accesses["n"] += 1
+        return [main] if accesses["n"] == 1 else [main, popup]
+
+    type(main.context).pages = property(lambda _: get_pages())
+
+    get_handler("browser.wait_for_popup")(
+        StepSpec(id="w", type="browser.wait_for_popup",
+                 params={"url_contains": "google", "timeout_ms": 5000}),
+        ctx,
+    )
+    assert ctx.page is popup
+
+
+def test_switch_to_main_restores_original():
+    from unittest.mock import MagicMock
+    from tegufox_flow.steps import StepSpec, get_handler
+
+    main = MagicMock()
+    popup = MagicMock()
+
+    ctx = MagicMock()
+    ctx.page = popup           # currently on the popup
+    ctx._original_page = main
+
+    get_handler("browser.switch_to_main")(
+        StepSpec(id="b", type="browser.switch_to_main", params={}),
+        ctx,
+    )
+    assert ctx.page is main
+
+
+def test_switch_to_main_no_original_raises():
+    from unittest.mock import MagicMock
+    import pytest
+    from tegufox_flow.steps import StepSpec, get_handler
+
+    ctx = MagicMock()
+    ctx._original_page = None
+    with pytest.raises(RuntimeError):
+        get_handler("browser.switch_to_main")(
+            StepSpec(id="b", type="browser.switch_to_main", params={}),
+            ctx,
+        )

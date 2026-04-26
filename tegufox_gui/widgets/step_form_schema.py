@@ -86,6 +86,13 @@ STEP_FORM: dict = {
         Field("key", "string", required=True, placeholder="Enter"),
         Field("selector", "string", placeholder="(optional) focus this first"),
     ],
+    "browser.wait_for_popup": [
+        Field("url_contains", "string",
+              placeholder="(optional) e.g. accounts.google",
+              help="Substring that must appear in the popup's URL"),
+        Field("timeout_ms", "int", default=30000),
+    ],
+    "browser.switch_to_main": [],
 
     # ---- Extract steps ----
     "extract.read_text": [

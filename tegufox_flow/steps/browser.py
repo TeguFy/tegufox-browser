@@ -129,6 +129,75 @@ def _type(spec: StepSpec, ctx) -> None:
     _native_type(ctx, sel, text, p)
 
 
+@register("browser.wait_for_popup", optional=("url_contains", "timeout_ms"))
+def _wait_for_popup(spec: StepSpec, ctx) -> None:
+    """Wait until a new page (popup / new tab) opens in the browser context
+    and switch ctx.page to it. Common case: site opens 'Login with Google'
+    and the rest of the auth flow runs in the popup.
+
+    Optional `url_contains`: a substring filter so we ignore unrelated
+    iframes/popups. If multiple popups match, picks the first.
+    """
+    import time
+    p = spec.params
+    timeout_ms = int(p.get("timeout_ms", 30_000))
+    needle = (p.get("url_contains") or "").strip()
+
+    main = ctx._original_page or ctx.page
+    deadline = time.monotonic() + timeout_ms / 1000.0
+    seen_initial = set()
+    try:
+        for pg in main.context.pages:
+            seen_initial.add(id(pg))
+    except Exception:
+        pass
+
+    while time.monotonic() < deadline:
+        try:
+            for pg in main.context.pages:
+                if pg is main:
+                    continue
+                if id(pg) in seen_initial:
+                    continue   # was already open before this step ran
+                url = pg.url or ""
+                if needle and needle not in url:
+                    continue
+                ctx.page = pg
+                # Re-bind HumanMouse/Keyboard to the popup so subsequent
+                # human=True clicks/typing target it.
+                try:
+                    from tegufox_automation import HumanMouse, HumanKeyboard
+                    if HumanMouse: ctx._human_mouse = HumanMouse(pg)
+                    if HumanKeyboard: ctx._human_keyboard = HumanKeyboard(pg)
+                except Exception:
+                    pass
+                ctx.logger.info(f"switched to popup: {url}")
+                return
+        except Exception:
+            pass
+        time.sleep(0.2)
+
+    raise RuntimeError(
+        f"no popup opened within {timeout_ms}ms"
+        + (f" matching {needle!r}" if needle else "")
+    )
+
+
+@register("browser.switch_to_main")
+def _switch_to_main(spec: StepSpec, ctx) -> None:
+    """Switch ctx.page back to the original page (the one opened first).
+    Use after browser.wait_for_popup when the popup-side flow is done."""
+    if ctx._original_page is None:
+        raise RuntimeError("no original page recorded; engine.run did not bind it")
+    ctx.page = ctx._original_page
+    try:
+        from tegufox_automation import HumanMouse, HumanKeyboard
+        if HumanMouse: ctx._human_mouse = HumanMouse(ctx._original_page)
+        if HumanKeyboard: ctx._human_keyboard = HumanKeyboard(ctx._original_page)
+    except Exception:
+        pass
+
+
 @register("browser.hover", required=("selector",))
 def _hover(spec: StepSpec, ctx) -> None:
     p = spec.params

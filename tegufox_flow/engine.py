@@ -200,6 +200,7 @@ class FlowEngine:
                 )
                 ctx._human_mouse = HumanMouse(session.page) if HumanMouse else None
                 ctx._human_keyboard = HumanKeyboard(session.page) if HumanKeyboard else None
+                ctx._original_page = session.page
                 ctx.engine = self
 
                 try:
