@@ -457,3 +457,161 @@ def health():
         "rules": len(default_rules()),
         "registry_records": _registry.count(),
     }
+
+
+# ============================================================
+# Flow router (Task 20)
+# ============================================================
+
+import os
+import json as _json
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from tegufox_core.database import Base, FlowRecord, FlowRun
+from tegufox_flow.dsl import parse_flow
+from tegufox_flow.runtime import run_flow as _run_flow
+
+flow_router = APIRouter(prefix="", tags=["flow"])
+
+
+def _flow_db_session():
+    db_path = os.environ.get("TEGUFOX_DB", "data/tegufox.db")
+    eng = create_engine(f"sqlite:///{Path(db_path).resolve()}")
+    Base.metadata.create_all(eng)
+    return sessionmaker(bind=eng)()
+
+
+class FlowUpload(BaseModel):
+    name: str
+    yaml: str
+
+
+class RunRequest(BaseModel):
+    profile: str
+    inputs: dict = {}
+
+
+@flow_router.post("/flows")
+def upload_flow(body: FlowUpload):
+    import yaml as _yaml
+    try:
+        data = _yaml.safe_load(body.yaml)
+        parse_flow(data)
+    except Exception as e:
+        raise HTTPException(400, str(e))
+
+    s = _flow_db_session()
+    try:
+        rec = s.query(FlowRecord).filter_by(name=body.name).first()
+        now = datetime.utcnow()
+        if rec is None:
+            rec = FlowRecord(name=body.name, yaml_text=body.yaml,
+                             schema_version=1, created_at=now, updated_at=now)
+            s.add(rec)
+        else:
+            rec.yaml_text = body.yaml
+            rec.updated_at = now
+        s.commit()
+        return {"name": rec.name, "id": rec.id}
+    finally:
+        s.close()
+
+
+@flow_router.get("/flows")
+def list_flows():
+    s = _flow_db_session()
+    try:
+        rows = s.query(FlowRecord).order_by(FlowRecord.name).all()
+        return [{"name": r.name, "schema_version": r.schema_version,
+                 "updated_at": r.updated_at.isoformat()} for r in rows]
+    finally:
+        s.close()
+
+
+@flow_router.get("/flows/{name}")
+def get_flow(name: str):
+    s = _flow_db_session()
+    try:
+        rec = s.query(FlowRecord).filter_by(name=name).first()
+        if rec is None:
+            raise HTTPException(404, "not found")
+        return {"name": rec.name, "yaml": rec.yaml_text}
+    finally:
+        s.close()
+
+
+@flow_router.post("/flows/{name}/runs")
+def post_run(name: str, body: RunRequest):
+    s = _flow_db_session()
+    try:
+        rec = s.query(FlowRecord).filter_by(name=name).first()
+        if rec is None:
+            raise HTTPException(404, "flow not found")
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+            f.write(rec.yaml_text)
+            tmp_path = f.name
+        result = _run_flow(Path(tmp_path), profile_name=body.profile,
+                           inputs=body.inputs,
+                           db_path=Path(os.environ.get("TEGUFOX_DB", "data/tegufox.db")))
+        return {"run_id": result.run_id, "status": result.status,
+                "last_step_id": result.last_step_id, "error": result.error}
+    finally:
+        s.close()
+
+
+@flow_router.get("/flows/{name}/runs")
+def list_runs(name: str, limit: int = 20):
+    s = _flow_db_session()
+    try:
+        rec = s.query(FlowRecord).filter_by(name=name).first()
+        if rec is None:
+            raise HTTPException(404, "flow not found")
+        runs = (s.query(FlowRun).filter_by(flow_id=rec.id)
+                .order_by(FlowRun.started_at.desc()).limit(limit).all())
+        return [{"run_id": r.run_id, "status": r.status,
+                 "profile_name": r.profile_name,
+                 "started_at": r.started_at.isoformat() if r.started_at else None,
+                 "finished_at": r.finished_at.isoformat() if r.finished_at else None}
+                for r in runs]
+    finally:
+        s.close()
+
+
+@flow_router.get("/runs/{run_id}")
+def get_run(run_id: str):
+    s = _flow_db_session()
+    try:
+        r = s.query(FlowRun).filter_by(run_id=run_id).first()
+        if r is None:
+            raise HTTPException(404, "not found")
+        return {"run_id": r.run_id, "status": r.status,
+                "profile_name": r.profile_name,
+                "started_at": r.started_at.isoformat() if r.started_at else None,
+                "finished_at": r.finished_at.isoformat() if r.finished_at else None,
+                "last_step_id": r.last_step_id, "error": r.error_text,
+                "inputs": _json.loads(r.inputs_json or "{}")}
+    finally:
+        s.close()
+
+
+@flow_router.get("/runs/{run_id}/log")
+def get_run_log(run_id: str):
+    log = Path("data/runs") / run_id / "log.jsonl"
+    if not log.exists():
+        return []
+    return [_json.loads(line) for line in log.read_text().splitlines() if line.strip()]
+
+
+def create_app():
+    """Factory used by tests + production."""
+    # Module-level `app` already exists — reuse it and attach the flow router.
+    app.include_router(flow_router)
+    return app
