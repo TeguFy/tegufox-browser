@@ -1,0 +1,23 @@
+schema_version: 1
+name: conditional_filter
+inputs:
+  base_url:
+    type: string
+    required: true
+steps:
+  - id: open
+    type: browser.goto
+    url: "{{ inputs.base_url }}/search.html"
+  - id: branch
+    type: control.if
+    when: "true"
+    then:
+      - id: marker_then
+        type: control.set
+        var: hit
+        value: "'then'"
+    else:
+      - id: marker_else
+        type: control.set
+        var: hit
+        value: "'else'"
