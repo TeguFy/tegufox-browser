@@ -1,25 +1,30 @@
 """Selector picker — opens a real Camoufox session and lets the user click
 an element to capture a CSS selector. Returned to the editor's form.
 
-Workflow:
-    1. User opens dialog from a "Pick…" button next to a selector field.
-    2. Enters URL, picks profile, clicks "Open Browser".
-    3. Camoufox launches in a worker QThread; PICKER_JS is injected.
-    4. User hovers (red highlight) and clicks (green confirm) elements.
-    5. Each click writes window.__teguPickedSelector; main thread polls.
-    6. User clicks "Use Selected" → dialog closes; selector returned.
+Three ways to produce a selector:
+  1. **Pick from page** — open browser, hover/click an element. PICKER_JS
+     emits both the computed CSS selector and the element's outerHTML.
+  2. **Type / edit** the selector directly in the line edit.
+  3. **Paste HTML** — drop an HTML snippet of the target element and
+     `html_to_selector()` extracts a selector using the same heuristics as
+     PICKER_JS (id → data-testid → data-test → input[name] → aria-label →
+     tag.most-specific-class → tag).
 
-The browser stays open until the user closes the dialog, so multiple
-selectors can be picked against the same page.
+Once a selector is in the field, the **Test Click** button instructs the
+running browser to actually click the element so the user can verify the
+selector works before saving the flow.
 """
 
 from __future__ import annotations
+import queue
+import re
 from typing import List, Optional
 
 from PyQt6.QtCore import QThread, pyqtSignal
+from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QComboBox,
-    QPushButton,
+    QPushButton, QPlainTextEdit, QGroupBox,
 )
 
 
@@ -28,6 +33,7 @@ PICKER_JS = r"""
   if (window.__teguPickerActive) return;
   window.__teguPickerActive = true;
   window.__teguPickedSelector = null;
+  window.__teguPickedHtml = null;
 
   function escId(id) {
     if (window.CSS && window.CSS.escape) return CSS.escape(id);
@@ -67,6 +73,10 @@ PICKER_JS = r"""
     e.stopPropagation();
     e.stopImmediatePropagation();
     window.__teguPickedSelector = buildSelector(e.target);
+    // Truncate outerHTML so a giant element doesn't OOM the bridge.
+    let html = '';
+    try { html = (e.target.outerHTML || '').slice(0, 4000); } catch (_) {}
+    window.__teguPickedHtml = html;
     if (last && last.style) last.style.outline = '3px solid limegreen';
   }, true);
 
@@ -81,9 +91,64 @@ PICKER_JS = r"""
 """
 
 
+# ---------------------------------------------------------------------------
+# HTML → selector heuristic (mirrors PICKER_JS priority order)
+# ---------------------------------------------------------------------------
+
+_OPENING_TAG = re.compile(r"<\s*([a-zA-Z][a-zA-Z0-9-]*)\s*([^>]*)/?>", re.DOTALL)
+
+
+def _attr(attrs: str, name: str) -> Optional[str]:
+    m = re.search(
+        rf'\b{re.escape(name)}\s*=\s*(?:"([^"]*)"|\'([^\']*)\')',
+        attrs,
+    )
+    if not m:
+        return None
+    return m.group(1) if m.group(1) is not None else m.group(2)
+
+
+def html_to_selector(html: str) -> Optional[str]:
+    """Extract a CSS selector from a single HTML element snippet.
+
+    Returns None if no recognisable opening tag is found.
+    Priority follows PICKER_JS:
+        #id → [data-testid] → [data-test] → input[name=...] →
+        tag[aria-label=...] → tag.most-specific-class → tag
+    """
+    if not html:
+        return None
+    m = _OPENING_TAG.search(html)
+    if not m:
+        return None
+    tag = m.group(1).lower()
+    attrs = m.group(2) or ""
+
+    if (v := _attr(attrs, "id")):
+        return f"#{v}"
+    if (v := _attr(attrs, "data-testid")):
+        return f'[data-testid="{v}"]'
+    if (v := _attr(attrs, "data-test")):
+        return f'[data-test="{v}"]'
+    if tag == "input" and (v := _attr(attrs, "name")):
+        return f'input[name="{v}"]'
+    if (v := _attr(attrs, "aria-label")):
+        return f'{tag}[aria-label="{v}"]'
+    if (v := _attr(attrs, "class")):
+        classes = [c for c in v.split() if c]
+        if classes:
+            best = max(classes, key=len)
+            return f"{tag}.{best}"
+    return tag
+
+
+# ---------------------------------------------------------------------------
+# Worker thread driving the captive Camoufox session
+# ---------------------------------------------------------------------------
+
 class _PickerWorker(QThread):
     status = pyqtSignal(str)
-    selector_picked = pyqtSignal(str)
+    element_picked = pyqtSignal(str, str)   # (selector, outer_html)
     crashed = pyqtSignal(str)
 
     def __init__(self, profile_name: str, url: str, parent=None):
@@ -91,9 +156,13 @@ class _PickerWorker(QThread):
         self.profile_name = profile_name
         self.url = url
         self._stop = False
+        self._actions: "queue.Queue[tuple]" = queue.Queue()
 
     def stop(self) -> None:
         self._stop = True
+
+    def request_test_click(self, selector: str) -> None:
+        self._actions.put(("test_click", selector))
 
     def run(self) -> None:
         try:
@@ -107,37 +176,85 @@ class _PickerWorker(QThread):
                 self.status.emit("Click any element in the browser to capture its selector.")
                 while not self._stop:
                     try:
+                        while True:
+                            cmd, arg = self._actions.get_nowait()
+                            if cmd == "test_click":
+                                self._do_test_click(page, arg)
+                    except queue.Empty:
+                        pass
+
+                    try:
                         sel = page.evaluate("() => window.__teguPickedSelector")
+                        html = page.evaluate("() => window.__teguPickedHtml")
                     except Exception:
                         if self._stop:
                             return
-                        sel = None
+                        sel, html = None, None
                     if sel:
-                        self.selector_picked.emit(str(sel))
+                        self.element_picked.emit(str(sel), str(html or ""))
                         try:
-                            page.evaluate("() => { window.__teguPickedSelector = null; }")
+                            page.evaluate(
+                                "() => { window.__teguPickedSelector = null;"
+                                " window.__teguPickedHtml = null; }"
+                            )
                         except Exception:
                             pass
                     self.msleep(300)
         except Exception as e:
             self.crashed.emit(f"{type(e).__name__}: {e}")
 
+    def _do_test_click(self, page, selector: str) -> None:
+        if not selector or not selector.strip():
+            self.status.emit("Test click skipped: selector is empty.")
+            return
+        self.status.emit(f"Testing click on {selector!r}…")
+        try:
+            locator = page.locator(selector)
+            count = locator.count()
+            if count == 0:
+                self.status.emit(f"✗ No element matched {selector!r}.")
+                return
+            if count > 1:
+                self.status.emit(f"⚠ {count} elements match {selector!r}; clicking the first.")
+            locator.first.click(timeout=5000)
+            self.status.emit(f"✓ Clicked {selector!r}. Re-injecting picker for next pick.")
+        except Exception as e:
+            self.status.emit(f"✗ Click failed: {type(e).__name__}: {e}")
+        finally:
+            try:
+                page.evaluate(PICKER_JS)
+            except Exception:
+                pass
+
+
+# ---------------------------------------------------------------------------
+# Dialog
+# ---------------------------------------------------------------------------
+
+_MONO = QFont()
+_MONO.setStyleHint(QFont.StyleHint.Monospace)
+_MONO.setFamily("Menlo")
+
 
 class SelectorPickerDialog(QDialog):
     def __init__(self, profile_names: List[str], default_url: str = "", parent=None):
         super().__init__(parent)
         self.setWindowTitle("Pick selector")
-        self.resize(560, 220)
+        self.resize(720, 600)
         self._worker: Optional[_PickerWorker] = None
         self._selected_selector = ""
 
         layout = QVBoxLayout(self)
 
+        # ---- URL + Profile + Open Browser --------------------------------
         url_row = QHBoxLayout()
         url_row.addWidget(QLabel("URL:"))
         self.url_edit = QLineEdit(default_url)
         self.url_edit.setPlaceholderText("https://example.com/path")
         url_row.addWidget(self.url_edit, 1)
+        self.open_btn = QPushButton("Open Browser")
+        self.open_btn.clicked.connect(self._on_open)
+        url_row.addWidget(self.open_btn)
         layout.addLayout(url_row)
 
         profile_row = QHBoxLayout()
@@ -148,31 +265,100 @@ class SelectorPickerDialog(QDialog):
         profile_row.addWidget(self.profile_combo, 1)
         layout.addLayout(profile_row)
 
-        layout.addWidget(QLabel("Selected selector:"))
+        # ---- Selector edit + Test Click ----------------------------------
+        sel_group = QGroupBox("Selected selector (editable)")
+        sg = QVBoxLayout(sel_group)
+        sel_row = QHBoxLayout()
         self.selected_edit = QLineEdit()
-        self.selected_edit.setReadOnly(True)
-        layout.addWidget(self.selected_edit)
+        self.selected_edit.setPlaceholderText("Pick / type / detect a CSS selector")
+        sel_row.addWidget(self.selected_edit, 1)
+        self.test_btn = QPushButton("Test Click")
+        self.test_btn.setToolTip("Click the element matching this selector in the running browser")
+        self.test_btn.setEnabled(False)
+        self.test_btn.clicked.connect(self._on_test_click)
+        sel_row.addWidget(self.test_btn)
+        sg.addLayout(sel_row)
+        self.selected_edit.textChanged.connect(self._on_selector_text_changed)
+        layout.addWidget(sel_group)
 
-        self.status_label = QLabel("Click 'Open Browser' to start picking.")
+        # ---- Picked element HTML (debug) ---------------------------------
+        html_group = QGroupBox("Picked element HTML (debug)")
+        hg = QVBoxLayout(html_group)
+        self.picked_html_view = QPlainTextEdit()
+        self.picked_html_view.setReadOnly(True)
+        self.picked_html_view.setFont(_MONO)
+        self.picked_html_view.setPlaceholderText("Click an element in the browser; its outerHTML will appear here.")
+        self.picked_html_view.setMaximumHeight(110)
+        hg.addWidget(self.picked_html_view)
+        layout.addWidget(html_group)
+
+        # ---- Paste HTML to detect ---------------------------------------
+        paste_group = QGroupBox("Or paste HTML to detect selector")
+        pg = QVBoxLayout(paste_group)
+        self.paste_html_edit = QPlainTextEdit()
+        self.paste_html_edit.setFont(_MONO)
+        self.paste_html_edit.setPlaceholderText(
+            '<button id="submit" class="btn primary">Sign in</button>'
+        )
+        self.paste_html_edit.setMaximumHeight(110)
+        pg.addWidget(self.paste_html_edit)
+        detect_row = QHBoxLayout()
+        detect_row.addStretch(1)
+        self.detect_btn = QPushButton("Detect Selector")
+        self.detect_btn.clicked.connect(self._on_detect)
+        detect_row.addWidget(self.detect_btn)
+        pg.addLayout(detect_row)
+        layout.addWidget(paste_group)
+
+        # ---- Status ------------------------------------------------------
+        self.status_label = QLabel("Click 'Open Browser' to start picking, or paste HTML below.")
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
 
+        # ---- Use / Cancel ------------------------------------------------
         btn_row = QHBoxLayout()
-        self.open_btn = QPushButton("Open Browser")
         self.use_btn = QPushButton("Use Selected")
         self.cancel_btn = QPushButton("Cancel")
-        self.open_btn.clicked.connect(self._on_open)
         self.use_btn.clicked.connect(self.accept)
         self.cancel_btn.clicked.connect(self._on_cancel)
         self.use_btn.setEnabled(False)
         btn_row.addStretch(1)
         btn_row.addWidget(self.cancel_btn)
-        btn_row.addWidget(self.open_btn)
         btn_row.addWidget(self.use_btn)
         layout.addLayout(btn_row)
 
+    # ----------------------------------------------------------------------
     def selected_selector(self) -> str:
-        return self._selected_selector
+        # Trust what's in the line edit — user may have typed/pasted/detected.
+        return self.selected_edit.text().strip() or self._selected_selector
+
+    def _on_selector_text_changed(self, txt: str) -> None:
+        has = bool(txt.strip())
+        self.use_btn.setEnabled(has)
+        self.test_btn.setEnabled(
+            has and self._worker is not None and self._worker.isRunning()
+        )
+
+    def _on_test_click(self) -> None:
+        if self._worker is None or not self._worker.isRunning():
+            self.status_label.setText("Open Browser first to use Test Click.")
+            return
+        sel = self.selected_edit.text().strip()
+        if not sel:
+            return
+        self._worker.request_test_click(sel)
+
+    def _on_detect(self) -> None:
+        html = self.paste_html_edit.toPlainText().strip()
+        if not html:
+            self.status_label.setText("Paste an HTML element first.")
+            return
+        sel = html_to_selector(html)
+        if not sel:
+            self.status_label.setText("Could not detect a selector — couldn't find an opening tag.")
+            return
+        self.selected_edit.setText(sel)
+        self.status_label.setText(f"Detected: {sel}")
 
     def _on_open(self) -> None:
         url = self.url_edit.text().strip()
@@ -190,15 +376,17 @@ class SelectorPickerDialog(QDialog):
         self.open_btn.setEnabled(False)
         self._worker = _PickerWorker(profile, url, parent=self)
         self._worker.status.connect(self.status_label.setText)
-        self._worker.selector_picked.connect(self._on_selector_picked)
+        self._worker.element_picked.connect(self._on_element_picked)
         self._worker.crashed.connect(self._on_crashed)
         self._worker.start()
 
-    def _on_selector_picked(self, sel: str) -> None:
+    def _on_element_picked(self, sel: str, html: str) -> None:
         self._selected_selector = sel
         self.selected_edit.setText(sel)
-        self.status_label.setText("Picked! Click another element to refine, or 'Use Selected'.")
+        self.picked_html_view.setPlainText(html)
+        self.status_label.setText("Picked! Try 'Test Click', or pick another element.")
         self.use_btn.setEnabled(True)
+        self.test_btn.setEnabled(True)
 
     def _on_crashed(self, msg: str) -> None:
         self.status_label.setText(f"Error: {msg}")
