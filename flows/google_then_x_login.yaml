@@ -178,14 +178,27 @@ steps:
     full_page: true
     on_error: { action: skip }
 
-  # Google consent screen — click "Continue" / "Tiếp tục" / "Allow" if it appears.
-  # Some apps skip consent for trusted accounts; on_error skip handles that.
+  # Wait for Continue button explicitly. Google's consent screen takes
+  # 3-5s to render fully on slow connections; the previous static sleep
+  # wasn't enough so click_continue_consent fired before button appeared.
+  - id: wait_continue_btn
+    type: browser.wait_for
+    selector: 'button:has-text("Continue"), button:has-text("Tiếp tục"), button:has-text("Allow"), button:has-text("Cho phép"), [jsname="LgbsSe"]:has-text("Continue"), [role="button"]:has-text("Continue"), [role="button"]:has-text("Tiếp tục")'
+    state: visible
+    timeout_ms: 20000
+    on_error: { action: skip }   # if no consent (already trusted), skip past
+
+  # Google consent screen — click Continue. Retry-with-backoff because
+  # the button may briefly disappear during a re-render.
   - id: click_continue_consent
     type: browser.click
     selector: 'button:has-text("Continue"), button:has-text("Tiếp tục"), button:has-text("Allow"), button:has-text("Cho phép"), [jsname="LgbsSe"]:has-text("Continue"), [jsname="LgbsSe"]:has-text("Tiếp tục"), [role="button"]:has-text("Continue"), [role="button"]:has-text("Tiếp tục")'
     human: false
     force: true
-    on_error: { action: skip }
+    on_error:
+      action: retry
+      max_attempts: 3
+      backoff_ms: 1500
 
   - id: settle_after_consent
     type: control.sleep
