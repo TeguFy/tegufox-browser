@@ -117,6 +117,22 @@ logging.basicConfig(
 logger = logging.getLogger("tegufox_automation")
 
 
+def _default_excluded_addons() -> list:
+    """Camoufox auto-downloads uBlock Origin and adds it to every session.
+    For automation flows that's hostile — uBO intercepts requests, hides
+    elements, and breaks selectors on OAuth pages and modern SPAs.
+    Excluding it from the addon load list is the only reliable way to
+    keep it from running (the Firefox `extensions.<id>.disabled` pref
+    isn't honored for Camoufox-injected addons).
+    """
+    try:
+        from camoufox.addons import DefaultAddons
+        # Exclude UBO; add others here as Camoufox grows the enum.
+        return [DefaultAddons.UBO]
+    except Exception:
+        return []
+
+
 def _background_channel_kill_prefs() -> Dict[str, Any]:
     """Firefox prefs that disable every background channel that can leak DNS
     (or traffic) *independently of whether a proxy is configured*.
@@ -782,6 +798,7 @@ class TegufoxSession:
                 geoip=False,  # Disable geoip to avoid proxy validation
                 proxy=proxy_config,
                 env=camoufox_env,
+                exclude_addons=_default_excluded_addons(),
                 **launch_opts,
             )
         else:
@@ -793,6 +810,7 @@ class TegufoxSession:
                 i_know_what_im_doing=True,
                 geoip=False,
                 env=camoufox_env,
+                exclude_addons=_default_excluded_addons(),
                 **launch_opts,
             )
         
