@@ -87,21 +87,19 @@ steps:
     selector: '[role="dialog"] [role="button"]:has-text("Đăng nhập bằng Google"), [role="dialog"] [role="button"]:has-text("Sign in with Google"), main [role="button"]:has-text("Đăng nhập bằng Google"), main [role="button"]:has-text("Sign in with Google"), [aria-modal="true"] [role="button"]:has-text("Google")'
     timeout_ms: 20000
 
+  # -----------------------------------------------------------------
+  # Step 2b: click Google + capture popup atomically.
+  # Camoufox sometimes spawns the OAuth window in an isolated browser
+  # instance that page.context.pages polling can't reach. The canonical
+  # fix is to register Playwright's popup listener BEFORE the click, so
+  # the page-level "popup" event captures the new page the instant
+  # window.open fires — regardless of where it lands.
+  # -----------------------------------------------------------------
   - id: click_google_signin
-    type: browser.click
+    type: browser.click_and_wait_popup
     selector: '[role="dialog"] [role="button"]:has-text("Đăng nhập bằng Google"), [role="dialog"] [role="button"]:has-text("Sign in with Google"), main [role="button"]:has-text("Đăng nhập bằng Google"), main [role="button"]:has-text("Sign in with Google"), [aria-modal="true"] [role="button"]:has-text("Google")'
-    human: false
-    force: true
-
-  # -----------------------------------------------------------------
-  # Step 3: wait for Google OAuth — works for both same-tab redirect
-  # (modern x.com) AND popup-based flows. Switches ctx.page to whichever
-  # page hits accounts.google.com.
-  # -----------------------------------------------------------------
-  - id: wait_oauth_popup
-    type: browser.wait_for_url
-    url_contains: "accounts.google.com"
     timeout_ms: 30000
+    force: true
 
   # -----------------------------------------------------------------
   # Step 4: settle into popup, then enter email.

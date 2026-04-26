@@ -88,6 +88,13 @@ STEP_FORM: dict = {
         Field("key", "string", required=True, placeholder="Enter"),
         Field("selector", "string", placeholder="(optional) focus this first"),
     ],
+    "browser.click_and_wait_popup": [
+        Field("selector", "string", required=True,
+              placeholder="selector that triggers window.open"),
+        Field("timeout_ms", "int", default=30000),
+        Field("force", "bool", default=False,
+              help="Bypass actionability checks for the click"),
+    ],
     "browser.wait_for_popup": [
         Field("url_contains", "string",
               placeholder="(optional) e.g. accounts.google",

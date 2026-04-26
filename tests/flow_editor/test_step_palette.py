@@ -17,8 +17,9 @@ def test_palette_lists_5_categories(qapp):
 def test_palette_has_all_step_types(qapp):
     p = StepPalette()
     types = sum((p.types_in(c) for c in p.categories()), [])
-    assert len(types) == 32
+    assert len(types) == 33
     assert "browser.goto" in types
+    assert "browser.click_and_wait_popup" in types
     assert "browser.wait_for_popup" in types
     assert "browser.wait_for_url" in types
     assert "browser.switch_to_main" in types

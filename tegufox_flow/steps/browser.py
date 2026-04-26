@@ -159,6 +159,44 @@ def _all_pages_across_contexts(main_page) -> list:
     return pages
 
 
+@register("browser.click_and_wait_popup", required=("selector",))
+def _click_and_wait_popup(spec: StepSpec, ctx) -> None:
+    """Atomic click + popup capture.
+
+    The canonical Playwright pattern: register a popup-event listener on
+    the current page BEFORE triggering the click, then perform the click,
+    then read the captured popup. Catches popups even when Camoufox
+    isolates them into a fresh top-level window that page.context.pages
+    polling never sees, because the page-level "popup" event fires the
+    instant window.open() is called.
+    """
+    p = spec.params
+    sel = ctx.render(p["selector"])
+    timeout_ms = int(p.get("timeout_ms", 30_000))
+    force = bool(p.get("force", False))
+
+    page = ctx.page
+    with page.expect_popup(timeout=timeout_ms) as popup_info:
+        page.locator(sel).first.click(force=force, timeout=timeout_ms)
+    popup = popup_info.value
+    try:
+        popup.wait_for_load_state("domcontentloaded", timeout=timeout_ms)
+    except Exception:
+        pass
+
+    ctx.page = popup
+    try:
+        from tegufox_automation import HumanMouse, HumanKeyboard
+        if HumanMouse: ctx._human_mouse = HumanMouse(popup)
+        if HumanKeyboard: ctx._human_keyboard = HumanKeyboard(popup)
+    except Exception:
+        pass
+    try:
+        ctx.logger.info(f"clicked, switched to popup: {popup.url}")
+    except Exception:
+        pass
+
+
 @register("browser.wait_for_popup", optional=("url_contains", "timeout_ms"))
 def _wait_for_popup(spec: StepSpec, ctx) -> None:
     """Wait until a new page (popup / tab / window) opens and switch ctx.page
