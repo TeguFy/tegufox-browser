@@ -317,3 +317,73 @@ def test_switch_to_main_no_original_raises():
             StepSpec(id="b", type="browser.switch_to_main", params={}),
             ctx,
         )
+
+
+def test_wait_for_url_matches_main_page_same_tab():
+    """OAuth in same tab: main page navigates to accounts.google — step
+    should match without needing a popup."""
+    from unittest.mock import MagicMock
+    import logging
+    from tegufox_flow.steps import StepSpec, get_handler
+
+    main = MagicMock()
+    main.url = "https://accounts.google.com/oauth"
+    main.context.pages = [main]
+
+    ctx = MagicMock()
+    ctx.page = main
+    ctx._original_page = main
+    ctx.logger = logging.getLogger("test_wait_url")
+
+    get_handler("browser.wait_for_url")(
+        StepSpec(id="w", type="browser.wait_for_url",
+                 params={"url_contains": "accounts.google", "timeout_ms": 5000}),
+        ctx,
+    )
+    # Main page already matches; ctx.page stays on main.
+    assert ctx.page is main
+
+
+def test_wait_for_url_matches_popup():
+    from unittest.mock import MagicMock
+    import logging
+    from tegufox_flow.steps import StepSpec, get_handler
+
+    main = MagicMock(); main.url = "https://x.com/i/flow/login"
+    popup = MagicMock(); popup.url = "https://accounts.google.com/oauth"
+    main.context.pages = [main, popup]
+
+    ctx = MagicMock()
+    ctx.page = main
+    ctx._original_page = main
+    ctx.logger = logging.getLogger("test_wait_url")
+
+    get_handler("browser.wait_for_url")(
+        StepSpec(id="w", type="browser.wait_for_url",
+                 params={"url_contains": "accounts.google", "timeout_ms": 5000}),
+        ctx,
+    )
+    assert ctx.page is popup
+
+
+def test_wait_for_url_times_out_when_no_match():
+    from unittest.mock import MagicMock
+    import logging
+    import pytest
+    from tegufox_flow.steps import StepSpec, get_handler
+
+    main = MagicMock(); main.url = "https://x.com/somewhere"
+    main.context.pages = [main]
+
+    ctx = MagicMock()
+    ctx.page = main
+    ctx._original_page = main
+    ctx.logger = logging.getLogger("test_wait_url")
+
+    with pytest.raises(RuntimeError) as e:
+        get_handler("browser.wait_for_url")(
+            StepSpec(id="w", type="browser.wait_for_url",
+                     params={"url_contains": "accounts.google", "timeout_ms": 200}),
+            ctx,
+        )
+    assert "no page matched" in str(e.value)

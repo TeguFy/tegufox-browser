@@ -183,6 +183,60 @@ def _wait_for_popup(spec: StepSpec, ctx) -> None:
     )
 
 
+@register("browser.wait_for_url", optional=("url_contains", "timeout_ms"))
+def _wait_for_url(spec: StepSpec, ctx) -> None:
+    """Wait until any page in the browser context has a URL matching
+    `url_contains` and switch ctx.page to it. Unlike wait_for_popup, this
+    handles both:
+
+      * **same-tab navigation** — site redirects the main page to the
+        target URL (common with modern OAuth: x.com Sign-in-with-Google
+        often redirects in place).
+      * **popup-based flows** — site opens window.open(...) and the OAuth
+        screen loads in a new page.
+
+    If `url_contains` is empty, the step succeeds as soon as any page
+    finishes navigating (useful as a generic 'wait for SPA route change').
+    """
+    import time
+    p = spec.params
+    timeout_ms = int(p.get("timeout_ms", 30_000))
+    needle = (p.get("url_contains") or "").strip()
+
+    main = ctx._original_page or ctx.page
+    deadline = time.monotonic() + timeout_ms / 1000.0
+
+    while time.monotonic() < deadline:
+        try:
+            for pg in main.context.pages:
+                url = pg.url or ""
+                if needle and needle not in url:
+                    continue
+                if not needle and not url:
+                    continue   # skip about:blank when no filter
+                if pg is not ctx.page:
+                    ctx.page = pg
+                    try:
+                        from tegufox_automation import HumanMouse, HumanKeyboard
+                        if HumanMouse: ctx._human_mouse = HumanMouse(pg)
+                        if HumanKeyboard: ctx._human_keyboard = HumanKeyboard(pg)
+                    except Exception:
+                        pass
+                    ctx.logger.info(f"switched to page: {url}")
+                else:
+                    ctx.logger.info(f"already on matching page: {url}")
+                return
+        except Exception:
+            pass
+        time.sleep(0.2)
+
+    raise RuntimeError(
+        f"no page matched URL"
+        + (f" containing {needle!r}" if needle else "")
+        + f" within {timeout_ms}ms"
+    )
+
+
 @register("browser.switch_to_main")
 def _switch_to_main(spec: StepSpec, ctx) -> None:
     """Switch ctx.page back to the original page (the one opened first).

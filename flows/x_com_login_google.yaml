@@ -65,10 +65,12 @@ steps:
     selector: 'div[role="button"][data-testid*="google"], div[aria-label*="Google"]'
 
   # -----------------------------------------------------------------
-  # Step 3: wait for the Google OAuth popup and switch into it
+  # Step 3: wait for Google OAuth — works for both same-tab redirect
+  # (modern x.com) AND popup-based flows. Switches ctx.page to whichever
+  # page hits accounts.google.com.
   # -----------------------------------------------------------------
   - id: wait_oauth_popup
-    type: browser.wait_for_popup
+    type: browser.wait_for_url
     url_contains: "accounts.google.com"
     timeout_ms: 30000
 

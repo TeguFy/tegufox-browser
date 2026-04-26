@@ -92,6 +92,12 @@ STEP_FORM: dict = {
               help="Substring that must appear in the popup's URL"),
         Field("timeout_ms", "int", default=30000),
     ],
+    "browser.wait_for_url": [
+        Field("url_contains", "string",
+              placeholder="(optional) e.g. accounts.google",
+              help="Substring; matches popup OR same-tab redirect"),
+        Field("timeout_ms", "int", default=30000),
+    ],
     "browser.switch_to_main": [],
 
     # ---- Extract steps ----
