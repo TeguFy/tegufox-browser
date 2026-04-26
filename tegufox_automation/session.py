@@ -159,6 +159,22 @@ def _background_channel_kill_prefs() -> Dict[str, Any]:
         'app.update.enabled': False,
         'app.update.auto': False,
 
+        # Ad-block / privacy extensions disabled by default. They intercept
+        # network requests and DOM nodes which can hide login buttons, eat
+        # OAuth iframes, and break flow selectors. Setting per-addon
+        # `.disabled = true` prefs is the same toggle Firefox's about:addons
+        # UI flips; if the extension isn't installed, the pref is a no-op.
+        'extensions.uBlock0@raymondhill.net.disabled': True,
+        'extensions.adguardadblocker@adguard.com.disabled': True,
+        'extensions.{d10d0bf8-f5b5-c8b4-a8b2-2b9879e08c5d}.disabled': True,  # Adblock Plus
+        'extensions.firefox@ghostery.com.disabled': True,
+        'extensions.privacy-badger@eff.org.disabled': True,
+        'extensions.{e58d3966-3d76-4cd9-8552-1582fbc800c1}.disabled': True,  # Adblock for Firefox
+        # Default-disable any auto-installed extension scope so future installs
+        # don't surprise a flow.
+        'extensions.autoDisableScopes': 15,
+        'extensions.startupScanScopes': 0,
+
         # Firefox Accounts / Sync
         'identity.fxaccounts.enabled': False,
         'services.sync.prefs.sync.engine.addresses': False,
