@@ -96,10 +96,23 @@ steps:
     timeout_ms: 30000
 
   - id: click_google_signin
-    type: browser.click_and_wait_popup
+    type: browser.click
     selector: '[role="button"]:has-text("Đăng nhập bằng Google"), [role="button"]:has-text("Sign in with Google"), [role="link"]:has-text("Đăng nhập bằng Google"), button:has-text("Đăng nhập bằng Google"), button:has-text("Sign in with Google"), a:has-text("Đăng nhập bằng Google"), div[tabindex]:has-text("Đăng nhập bằng Google")'
-    timeout_ms: 30000
+    human: false
     force: true
+
+  # -----------------------------------------------------------------
+  # Step 3: wait for Google OAuth — scans pages across all browser
+  # contexts (Camoufox sometimes opens popup in an isolated window).
+  # If this still times out, the popup is in a fully-detached browser
+  # process Playwright can't reach; user must complete login manually
+  # in the visible popup window. The flow's later steps will only
+  # re-engage automation once ctx.page can switch to the OAuth page.
+  # -----------------------------------------------------------------
+  - id: wait_oauth_popup
+    type: browser.wait_for_url
+    url_contains: "accounts.google.com"
+    timeout_ms: 30000
 
   # -----------------------------------------------------------------
   # Step 4: settle into popup, then enter email.
