@@ -80,11 +80,12 @@ steps:
     type: control.sleep
     ms: 800
 
+  # The :has-text engine searches only the top-level document, NOT inside
+  # cross-origin iframes — so the Google One Tap iframe is naturally
+  # excluded; no need for [role="dialog"] scoping.
   - id: wait_google_btn
     type: browser.wait_for
-    # Scope to the login DIALOG / MAIN content; this excludes the
-    # One Tap iframe which lives at <body> level outside the dialog.
-    selector: '[role="dialog"] [role="button"]:has-text("Đăng nhập bằng Google"), [role="dialog"] [role="button"]:has-text("Sign in with Google"), main [role="button"]:has-text("Đăng nhập bằng Google"), main [role="button"]:has-text("Sign in with Google"), [aria-modal="true"] [role="button"]:has-text("Google")'
+    selector: '[role="button"]:has-text("Đăng nhập bằng Google"), [role="button"]:has-text("Sign in with Google"), [role="button"]:has-text("Continue with Google"), button:has-text("Đăng nhập bằng Google"), button:has-text("Sign in with Google")'
     timeout_ms: 20000
 
   # -----------------------------------------------------------------
@@ -97,7 +98,7 @@ steps:
   # -----------------------------------------------------------------
   - id: click_google_signin
     type: browser.click_and_wait_popup
-    selector: '[role="dialog"] [role="button"]:has-text("Đăng nhập bằng Google"), [role="dialog"] [role="button"]:has-text("Sign in with Google"), main [role="button"]:has-text("Đăng nhập bằng Google"), main [role="button"]:has-text("Sign in with Google"), [aria-modal="true"] [role="button"]:has-text("Google")'
+    selector: '[role="button"]:has-text("Đăng nhập bằng Google"), [role="button"]:has-text("Sign in with Google"), [role="button"]:has-text("Continue with Google"), button:has-text("Đăng nhập bằng Google"), button:has-text("Sign in with Google")'
     timeout_ms: 30000
     force: true
 
