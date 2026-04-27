@@ -163,6 +163,96 @@ def _all_pages_across_contexts(main_page) -> list:
     return pages
 
 
+@register("browser.click_text", required=("text",))
+def _click_text(spec: StepSpec, ctx) -> None:
+    """Smart click by visible text. Walks every interactive element on the
+    page and clicks the first one whose visible text contains the target.
+
+    Bypasses fragile CSS selector lists — works even when class names /
+    data-testids change. Considers `<button>`, `<a>`, `[role=button]`,
+    `[role=link]`, and `<div>`/`<span>` with `tabindex` (Twitter-style
+    custom buttons).
+
+    Optional:
+      exact: bool — require equals (default False = substring contains)
+      role: filter ('button' | 'link' | None for any)
+      timeout_ms: how long to keep retrying as page renders
+    """
+    import time as _time
+    p = spec.params
+    target = ctx.render(p["text"]).strip()
+    role = p.get("role")
+    exact = bool(p.get("exact", False))
+    timeout_ms = int(p.get("timeout_ms", 15_000))
+    force = bool(p.get("force", True))
+
+    js_find = """
+    (args) => {
+      const {target, role, exact} = args;
+      const t = target.toLowerCase();
+      // Candidate selectors widest-to-narrowest; we filter by text below.
+      const sels = role === 'button'
+        ? '[role=button], button, [tabindex]'
+        : role === 'link'
+          ? '[role=link], a[href], [tabindex]'
+          : 'button, a[href], [role=button], [role=link], [tabindex], [onclick]';
+      const all = Array.from(document.querySelectorAll(sels));
+      function visible(el) {
+        const r = el.getBoundingClientRect();
+        if (r.width === 0 || r.height === 0) return false;
+        const cs = getComputedStyle(el);
+        return cs.visibility !== 'hidden' && cs.display !== 'none' && parseFloat(cs.opacity) > 0;
+      }
+      function txt(el) {
+        const aria = el.getAttribute('aria-label') || '';
+        const inner = (el.textContent || '').trim();
+        return (aria + ' ' + inner).toLowerCase();
+      }
+      const match = all.find(el => {
+        if (!visible(el)) return false;
+        const s = txt(el);
+        return exact ? s === t : s.includes(t);
+      });
+      if (!match) return null;
+      // Mark for click via a unique attribute so the Playwright side can
+      // re-locate it without re-running the heuristic.
+      const id = '__tegu-click-' + Date.now() + '-' + Math.floor(Math.random()*1e6);
+      match.setAttribute('data-tegu-click', id);
+      return id;
+    }
+    """
+
+    deadline = _time.monotonic() + timeout_ms / 1000.0
+    found_id = None
+    while _time.monotonic() < deadline:
+        try:
+            found_id = ctx.page.evaluate(
+                js_find, {"target": target, "role": role, "exact": exact}
+            )
+        except Exception:
+            found_id = None
+        if found_id:
+            break
+        _time.sleep(0.3)
+
+    if not found_id:
+        raise RuntimeError(
+            f"click_text: no visible element matched {target!r}"
+            + (f" (role={role!r})" if role else "")
+        )
+
+    sel = f'[data-tegu-click="{found_id}"]'
+    ctx.page.locator(sel).first.click(force=force, timeout=timeout_ms)
+    try:
+        ctx.page.evaluate(
+            "(s) => { document.querySelector(s)?.removeAttribute('data-tegu-click'); }",
+            sel,
+        )
+    except Exception:
+        pass
+    ctx.logger.info(f"click_text: clicked element matching {target!r}")
+
+
 @register("browser.save_cookies", required=("path",))
 def _save_cookies(spec: StepSpec, ctx) -> None:
     """Export browser-context cookies to a JSON file. Useful at the end of

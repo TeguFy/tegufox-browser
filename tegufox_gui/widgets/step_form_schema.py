@@ -89,6 +89,17 @@ STEP_FORM: dict = {
         Field("selector", "string", placeholder="(optional) focus this first"),
     ],
     "browser.disable_popups": [],
+    "browser.click_text": [
+        Field("text", "string", required=True,
+              placeholder='e.g. "Đăng nhập bằng Google"',
+              help="Visible text or aria-label to match"),
+        Field("role", "select", choices=["", "button", "link"], default="",
+              help="Restrict to button/link/any (empty = any clickable)"),
+        Field("exact", "bool", default=False,
+              help="Require exact match (default = substring contains)"),
+        Field("timeout_ms", "int", default=15000),
+        Field("force", "bool", default=True),
+    ],
     "browser.save_cookies": [
         Field("path", "string", required=True,
               placeholder="data/cookies/{{ profile_name }}.json"),

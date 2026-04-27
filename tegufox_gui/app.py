@@ -88,6 +88,10 @@ class TegufoxProfileManager(QMainWindow):
         self.flows_page = FlowsPage()
         self.content_stack.addWidget(self.flows_page)
 
+        from tegufox_gui.pages.runs_page import RunsPage
+        self.runs_page = RunsPage()
+        self.content_stack.addWidget(self.runs_page)
+
     def create_sidebar(self):
         """Create compact sidebar with navigation"""
         sidebar = QFrame()
@@ -147,6 +151,11 @@ class TegufoxProfileManager(QMainWindow):
         flows_btn.clicked.connect(lambda: self.switch_page(6))
         layout.addWidget(flows_btn)
         self.nav_buttons.append(flows_btn)
+
+        runs_btn = SidebarButton("Runs", "📊")
+        runs_btn.clicked.connect(lambda: self.switch_page(7))
+        layout.addWidget(runs_btn)
+        self.nav_buttons.append(runs_btn)
 
         proxies_btn = SidebarButton("Proxies", "🔌")
         proxies_btn.clicked.connect(lambda: self.switch_page(4))

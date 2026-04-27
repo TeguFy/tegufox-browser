@@ -387,3 +387,48 @@ def test_wait_for_url_times_out_when_no_match():
             ctx,
         )
     assert "no page matched" in str(e.value)
+
+
+def test_click_text_calls_evaluate_and_locator():
+    from unittest.mock import MagicMock
+    import logging
+    from tegufox_flow.steps import StepSpec, get_handler
+
+    ctx = MagicMock()
+    ctx.page = MagicMock()
+    ctx.render.side_effect = lambda s: s
+    ctx.logger = logging.getLogger("test_click_text")
+    ctx.page.evaluate.return_value = "tegu-id-123"
+    locator = MagicMock()
+    ctx.page.locator.return_value = locator
+
+    get_handler("browser.click_text")(
+        StepSpec(id="ct", type="browser.click_text",
+                 params={"text": "Sign in"}),
+        ctx,
+    )
+    # Verify the text-finder JS ran and returned an id, then locator
+    # was called with the marker selector.
+    ctx.page.evaluate.assert_called()
+    locator.first.click.assert_called_once()
+
+
+def test_click_text_raises_when_not_found():
+    from unittest.mock import MagicMock
+    import logging
+    import pytest
+    from tegufox_flow.steps import StepSpec, get_handler
+
+    ctx = MagicMock()
+    ctx.page = MagicMock()
+    ctx.render.side_effect = lambda s: s
+    ctx.logger = logging.getLogger("test_click_text")
+    ctx.page.evaluate.return_value = None  # never matches
+
+    with pytest.raises(RuntimeError) as e:
+        get_handler("browser.click_text")(
+            StepSpec(id="ct", type="browser.click_text",
+                     params={"text": "Ghost", "timeout_ms": 100}),
+            ctx,
+        )
+    assert "Ghost" in str(e.value)
