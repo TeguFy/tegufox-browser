@@ -218,6 +218,38 @@ STEP_FORM: dict = {
         Field("timeout_ms", "int", default=30000),
     ],
 
+    # ---- AI Copilot steps ----
+    "ai.click": [
+        Field("description", "string", required=True,
+              placeholder='e.g. "the Sign in with Google button"'),
+        Field("force", "bool", default=True),
+        Field("timeout_ms", "int", default=15000),
+        Field("model", "string", placeholder="(optional) override default model"),
+    ],
+    "ai.fix_selector": [
+        Field("selector", "string", required=True,
+              placeholder="The current (possibly broken) selector"),
+        Field("description", "string", required=True,
+              placeholder='e.g. "Sign in button on x.com login modal"'),
+        Field("set", "string", required=True,
+              placeholder="var name to store the validated/repaired selector"),
+        Field("model", "string"),
+    ],
+    "ai.extract": [
+        Field("description", "string", required=True,
+              placeholder='e.g. "the order total on the receipt"'),
+        Field("set", "string", required=True),
+        Field("max_tokens", "int", default=256),
+        Field("model", "string"),
+    ],
+    "ai.ask": [
+        Field("question", "string", required=True, multiline=True),
+        Field("set", "string", required=True),
+        Field("include_dom", "bool", default=True),
+        Field("max_tokens", "int", default=512),
+        Field("model", "string"),
+    ],
+
     # ---- State steps ----
     "state.save": [
         Field("key", "string", required=True),

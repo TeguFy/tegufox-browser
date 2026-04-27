@@ -92,6 +92,21 @@ class TegufoxProfileManager(QMainWindow):
         self.runs_page = RunsPage()
         self.content_stack.addWidget(self.runs_page)
 
+        from tegufox_gui.pages.schedules_page import SchedulesPage
+        self.schedules_page = SchedulesPage()
+        self.content_stack.addWidget(self.schedules_page)
+
+        # Background scheduler daemon — polls flow_schedules every 30s.
+        try:
+            from tegufox_flow.scheduler import SchedulerDaemon
+            self.scheduler = SchedulerDaemon(db_path="data/tegufox.db")
+            self.scheduler.start()
+        except Exception as e:
+            import logging
+            logging.getLogger("tegufox_gui").warning(
+                f"scheduler failed to start: {e}"
+            )
+
     def create_sidebar(self):
         """Create compact sidebar with navigation"""
         sidebar = QFrame()
@@ -156,6 +171,11 @@ class TegufoxProfileManager(QMainWindow):
         runs_btn.clicked.connect(lambda: self.switch_page(7))
         layout.addWidget(runs_btn)
         self.nav_buttons.append(runs_btn)
+
+        schedules_btn = SidebarButton("Schedules", "⏰")
+        schedules_btn.clicked.connect(lambda: self.switch_page(8))
+        layout.addWidget(schedules_btn)
+        self.nav_buttons.append(schedules_btn)
 
         proxies_btn = SidebarButton("Proxies", "🔌")
         proxies_btn.clicked.connect(lambda: self.switch_page(4))

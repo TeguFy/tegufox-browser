@@ -478,6 +478,31 @@ class FlowBatch(Base):
     finished_at = Column(DateTime)
 
 
+class FlowSchedule(Base):
+    """Scheduled flow runs (cron + one-shot).
+
+    cron_expression non-null → recurring on that cron.
+    run_at non-null & cron_expression null → one-shot at that time.
+    next_run_at is the upcoming firing time the scheduler polls for.
+    """
+    __tablename__ = "flow_schedules"
+
+    id              = Column(Integer, primary_key=True)
+    name            = Column(String(255), nullable=False)
+    flow_name       = Column(String(255), nullable=False, index=True)
+    profile_name    = Column(String(255), nullable=False)
+    proxy_name      = Column(String(255))
+    inputs_json     = Column(Text, nullable=False, default="{}")
+    cron_expression = Column(String(255))
+    run_at          = Column(DateTime)
+    enabled         = Column(Boolean, nullable=False, default=True, index=True)
+    next_run_at     = Column(DateTime, index=True)
+    last_run_id     = Column(String(64))
+    last_run_at     = Column(DateTime)
+    created_at      = Column(DateTime, nullable=False)
+    updated_at      = Column(DateTime, nullable=False)
+
+
 class ProfileDatabase:
     """Database manager for profiles"""
 

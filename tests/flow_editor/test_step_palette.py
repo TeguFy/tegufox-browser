@@ -11,13 +11,13 @@ from tegufox_gui.widgets.step_palette import StepPalette
 
 def test_palette_lists_5_categories(qapp):
     p = StepPalette()
-    assert p.categories() == ["browser", "control", "extract", "io", "state"]
+    assert p.categories() == ["ai", "browser", "control", "extract", "io", "state"]
 
 
 def test_palette_has_all_step_types(qapp):
     p = StepPalette()
     types = sum((p.types_in(c) for c in p.categories()), [])
-    assert len(types) == 38
+    assert len(types) == 42
     assert "browser.goto" in types
     assert "browser.disable_popups" in types
     assert "browser.save_cookies" in types
