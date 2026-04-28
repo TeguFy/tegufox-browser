@@ -842,7 +842,37 @@ class TegufoxSession:
         # Create page
         logger.info("Creating new page...")
         self.page = self.context.new_page()
-        
+
+        # Apply global popup-override setting BEFORE the user has a chance
+        # to navigate. add_init_script ensures every future navigation —
+        # incl. window.open replacements — runs the override too.
+        try:
+            from tegufox_core.runtime_settings import get_setting
+            if bool(get_setting("disable_popups", True)):
+                _override_js = (
+                    "(() => {"
+                    "  if (window.__teguPopupsDisabled) return;"
+                    "  window.__teguPopupsDisabled = true;"
+                    "  window.open = function(url) {"
+                    "    if (typeof url === 'string' && url.length > 0) {"
+                    "      window.location.href = url;"
+                    "    }"
+                    "    return window;"
+                    "  };"
+                    "})();"
+                )
+                try:
+                    self.context.add_init_script(_override_js)
+                except Exception as e:
+                    logger.warning(f"add_init_script failed: {e}")
+                try:
+                    self.page.evaluate(_override_js)
+                except Exception:
+                    pass
+                logger.info("Global popup override active (settings.disable_popups=True)")
+        except Exception as e:
+            logger.warning(f"runtime_settings probe failed: {e}")
+
         # Add page lifecycle event listeners
         def on_page_close(page):
             logger.warning(f"Page closed: {page}")

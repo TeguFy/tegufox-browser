@@ -40,6 +40,7 @@ _DEFAULT_SETTINGS = {
     "profiles_dir": "profiles",
     "api_port": 8420,
     "browser_binary": "",  # Empty = auto-detect
+    "disable_popups": True,  # window.open → same-tab redirect (global default)
     "rules": {r: True for r in _RULE_NAMES},
     "market_weights": {
         "firefox/windows": 0.40,
@@ -188,6 +189,23 @@ class SettingsWidget(QWidget):
         self.browser_binary_input.textChanged.connect(self._refresh_browser_binary_status)
         self._refresh_browser_binary_status()
 
+        # ---- Disable popups (global) ------------------------------------
+        from PyQt6.QtWidgets import QCheckBox
+        gen_lay.addWidget(QLabel("Browser behaviour:", styleSheet=LBL), 4, 0)
+        self.disable_popups_cb = QCheckBox(
+            "Disable popups (window.open → same-tab redirect)"
+        )
+        self.disable_popups_cb.setStyleSheet(f"color: {DarkPalette.TEXT};")
+        self.disable_popups_cb.setToolTip(
+            "When enabled, every TegufoxSession (Sessions, Flows, Batch) "
+            "injects a window.open override that turns popups into same-tab "
+            "navigations. This makes OAuth flows reachable by Playwright "
+            "(Camoufox sometimes isolates popup windows in unreachable "
+            "browser instances). Per-flow `browser.disable_popups` step "
+            "still works as a runtime override regardless of this setting."
+        )
+        gen_lay.addWidget(self.disable_popups_cb, 4, 1, 1, 2)
+
         gen_grp.setLayout(gen_lay)
         root.addWidget(gen_grp)
 
@@ -322,7 +340,8 @@ class SettingsWidget(QWidget):
                 loaded = ast.literal_eval(_SETTINGS_PATH.read_text())
                 if not isinstance(loaded, dict):
                     loaded = {}
-                for k in ("profiles_dir", "api_port", "browser_binary"):
+                for k in ("profiles_dir", "api_port", "browser_binary",
+                         "disable_popups"):
                     if k in loaded:
                         settings[k] = loaded[k]
                 if "rules" in loaded:
@@ -334,6 +353,7 @@ class SettingsWidget(QWidget):
         self.profiles_dir_input.setText(str(settings["profiles_dir"]))
         self.api_port_spin.setValue(int(settings["api_port"]))
         self.browser_binary_input.setText(str(settings.get("browser_binary", "")))
+        self.disable_popups_cb.setChecked(bool(settings.get("disable_popups", True)))
         for rule, cb in self._rule_cbs.items():
             cb.setChecked(settings["rules"].get(rule, True))
         for key, spin in self._weight_spins.items():
@@ -344,6 +364,7 @@ class SettingsWidget(QWidget):
             "profiles_dir": self.profiles_dir_input.text(),
             "api_port": self.api_port_spin.value(),
             "browser_binary": self.browser_binary_input.text(),
+            "disable_popups": self.disable_popups_cb.isChecked(),
             "rules": {r: cb.isChecked() for r, cb in self._rule_cbs.items()},
             "market_weights": {k: sp.value() for k, sp in self._weight_spins.items()},
         }
