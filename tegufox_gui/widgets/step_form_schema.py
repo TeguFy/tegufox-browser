@@ -224,6 +224,9 @@ STEP_FORM: dict = {
               placeholder='e.g. "the Sign in with Google button"'),
         Field("force", "bool", default=True),
         Field("timeout_ms", "int", default=15000),
+        Field("provider", "select",
+              choices=["", "anthropic", "openai", "gemini"], default="",
+              help="Empty = auto-detect from env"),
         Field("model", "string", placeholder="(optional) override default model"),
     ],
     "ai.fix_selector": [
@@ -233,6 +236,8 @@ STEP_FORM: dict = {
               placeholder='e.g. "Sign in button on x.com login modal"'),
         Field("set", "string", required=True,
               placeholder="var name to store the validated/repaired selector"),
+        Field("provider", "select",
+              choices=["", "anthropic", "openai", "gemini"], default=""),
         Field("model", "string"),
     ],
     "ai.extract": [
@@ -240,6 +245,8 @@ STEP_FORM: dict = {
               placeholder='e.g. "the order total on the receipt"'),
         Field("set", "string", required=True),
         Field("max_tokens", "int", default=256),
+        Field("provider", "select",
+              choices=["", "anthropic", "openai", "gemini"], default=""),
         Field("model", "string"),
     ],
     "ai.ask": [
@@ -247,6 +254,8 @@ STEP_FORM: dict = {
         Field("set", "string", required=True),
         Field("include_dom", "bool", default=True),
         Field("max_tokens", "int", default=512),
+        Field("provider", "select",
+              choices=["", "anthropic", "openai", "gemini"], default=""),
         Field("model", "string"),
     ],
 

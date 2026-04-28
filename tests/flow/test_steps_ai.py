@@ -138,3 +138,81 @@ def test_ai_ask_stores_answer(monkeypatch):
             ctx,
         )
     ctx.set_var.assert_called_once_with("ans", "yes")
+
+
+# --- Provider resolution -----------------------------------------------------
+
+def test_resolve_provider_explicit(monkeypatch):
+    from tegufox_flow.steps.ai_providers import _resolve_provider
+    assert _resolve_provider("anthropic") == "anthropic"
+    assert _resolve_provider("openai") == "openai_compatible"
+    assert _resolve_provider("gemini") == "gemini"
+
+
+def test_resolve_provider_env_var(monkeypatch):
+    from tegufox_flow.steps.ai_providers import _resolve_provider
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.setenv("TEGUFOX_AI_PROVIDER", "gemini")
+    assert _resolve_provider() == "gemini"
+
+
+def test_resolve_provider_auto_anthropic_first(monkeypatch):
+    from tegufox_flow.steps.ai_providers import _resolve_provider
+    monkeypatch.delenv("TEGUFOX_AI_PROVIDER", raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
+    monkeypatch.setenv("OPENAI_API_KEY", "y")
+    assert _resolve_provider() == "anthropic"
+
+
+def test_resolve_provider_auto_falls_back_to_openai(monkeypatch):
+    from tegufox_flow.steps.ai_providers import _resolve_provider
+    monkeypatch.delenv("TEGUFOX_AI_PROVIDER", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    assert _resolve_provider() == "openai_compatible"
+
+
+def test_resolve_provider_auto_falls_back_to_gemini(monkeypatch):
+    from tegufox_flow.steps.ai_providers import _resolve_provider
+    monkeypatch.delenv("TEGUFOX_AI_PROVIDER", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY", "z")
+    assert _resolve_provider() == "gemini"
+
+
+def test_resolve_provider_no_keys_raises(monkeypatch):
+    from tegufox_flow.steps.ai_providers import _resolve_provider
+    for v in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY",
+              "GOOGLE_API_KEY", "TEGUFOX_AI_PROVIDER"):
+        monkeypatch.delenv(v, raising=False)
+    with pytest.raises(RuntimeError) as e:
+        _resolve_provider()
+    assert "ANTHROPIC_API_KEY" in str(e.value)
+
+
+def test_ai_click_uses_explicit_provider(monkeypatch):
+    """Step's `provider` param flows down to ask_llm()."""
+    from unittest.mock import patch as _patch
+    monkeypatch.setenv("OPENAI_API_KEY", "test")
+    ctx = _ctx_with_page()
+    locator = MagicMock()
+    ctx.page.locator.return_value = locator
+
+    captured = {}
+    def fake_ask(*args, **kwargs):
+        captured.update(kwargs)
+        return "#x"
+
+    with _patch("tegufox_flow.steps.ai._ask_llm", side_effect=fake_ask):
+        get_handler("ai.click")(
+            StepSpec(id="c", type="ai.click",
+                     params={"description": "x", "provider": "openai"}),
+            ctx,
+        )
+    assert captured.get("provider") == "openai"
