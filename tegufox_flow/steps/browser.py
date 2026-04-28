@@ -163,6 +163,134 @@ def _all_pages_across_contexts(main_page) -> list:
     return pages
 
 
+@register("browser.fill_form_by_labels", required=("fields",))
+def _fill_form_by_labels(spec: StepSpec, ctx) -> None:
+    """Fill multiple form inputs by their visible label text.
+
+    `fields` is a dict {label_text: value_to_type}. For each entry the
+    step finds the matching <input>/<textarea>/<select> on the page and
+    fills it. Matching priority:
+      1. <label for="..."> with that text → input by id
+      2. <input> with placeholder matching the text
+      3. <input> with aria-label matching the text
+      4. <input> sibling/descendant of an element with that text
+      5. AI fallback (if `use_ai=true` and ANTHROPIC/OPENAI/GEMINI key set)
+    """
+    p = spec.params
+    fields = p.get("fields") or {}
+    if not isinstance(fields, dict):
+        raise ValueError("fields must be a {label: value} dict")
+    use_ai = bool(p.get("use_ai", False))
+    human = bool(p.get("human", False))
+    timeout_ms = int(p.get("timeout_ms", 5_000))
+
+    # Render values (Jinja-aware) and labels (in case user uses {{ }}).
+    fields_r = {}
+    for k, v in fields.items():
+        rk = ctx.render(k) if isinstance(k, str) else k
+        rv = ctx.render(v) if isinstance(v, str) else v
+        fields_r[rk] = rv
+
+    js_resolve = """
+    (label) => {
+      const t = label.toLowerCase();
+      function visible(el) {
+        if (!el) return false;
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      }
+      function tag(id) {
+        return document.querySelector(
+          `input[data-tegu-fill="${id}"], textarea[data-tegu-fill="${id}"], select[data-tegu-fill="${id}"]`
+        );
+      }
+      const id = '__tegu-fill-' + Date.now() + '-' + Math.floor(Math.random()*1e6);
+      // 1. <label for="...">
+      const labels = Array.from(document.querySelectorAll('label'));
+      const lab = labels.find(l => visible(l) && l.textContent.toLowerCase().includes(t));
+      if (lab) {
+        const fid = lab.getAttribute('for');
+        const el = fid ? document.getElementById(fid)
+                       : lab.querySelector('input, textarea, select');
+        if (el && visible(el)) { el.setAttribute('data-tegu-fill', id); return id; }
+      }
+      // 2. placeholder match
+      const ph = Array.from(document.querySelectorAll('input[placeholder], textarea[placeholder]'))
+                       .find(el => visible(el) &&
+                             (el.placeholder || '').toLowerCase().includes(t));
+      if (ph) { ph.setAttribute('data-tegu-fill', id); return id; }
+      // 3. aria-label
+      const aria = Array.from(document.querySelectorAll('input[aria-label], textarea[aria-label], select[aria-label]'))
+                         .find(el => visible(el) &&
+                               (el.getAttribute('aria-label') || '').toLowerCase().includes(t));
+      if (aria) { aria.setAttribute('data-tegu-fill', id); return id; }
+      // 4. text-near-input heuristic
+      const all = Array.from(document.querySelectorAll('*')).filter(visible);
+      for (const el of all) {
+        if ((el.textContent || '').toLowerCase().trim() === t) {
+          const inp = el.parentElement?.querySelector('input, textarea, select')
+                    || el.querySelector('input, textarea, select')
+                    || el.nextElementSibling?.querySelector?.('input, textarea, select');
+          if (inp && visible(inp)) { inp.setAttribute('data-tegu-fill', id); return id; }
+        }
+      }
+      return null;
+    }
+    """
+
+    filled = 0
+    for label, value in fields_r.items():
+        token = None
+        try:
+            token = ctx.page.evaluate(js_resolve, label)
+        except Exception:
+            token = None
+
+        if not token and use_ai:
+            try:
+                from .ai_providers import ask_llm
+                html = ctx.page.content()[:8000]
+                sel = ask_llm(
+                    system=(
+                        "You match a form field by its visible label. Return "
+                        "ONLY a CSS selector for the matching <input>/"
+                        "<textarea>/<select>. NOT_FOUND if absent."
+                    ),
+                    user=f"LABEL: {label}\nHTML:\n{html}",
+                    max_tokens=120,
+                    provider=p.get("provider"),
+                ).strip()
+                if sel and sel != "NOT_FOUND":
+                    ctx.page.locator(sel).first.fill(str(value))
+                    filled += 1
+                    continue
+            except Exception as e:
+                ctx.logger.warning(f"fill_form: AI fallback failed for {label!r}: {e}")
+
+        if not token:
+            ctx.logger.warning(f"fill_form: no field for label {label!r}")
+            continue
+
+        sel = f'[data-tegu-fill="{token}"]'
+        if human and ctx._human_keyboard is not None:
+            try:
+                ctx._human_keyboard.type_into(sel, str(value))
+            except Exception:
+                ctx.page.locator(sel).first.fill(str(value))
+        else:
+            ctx.page.locator(sel).first.fill(str(value))
+        try:
+            ctx.page.evaluate(
+                "(s) => document.querySelector(s)?.removeAttribute('data-tegu-fill')",
+                sel,
+            )
+        except Exception:
+            pass
+        filled += 1
+
+    ctx.logger.info(f"fill_form_by_labels: filled {filled}/{len(fields_r)} fields")
+
+
 @register("browser.click_text", required=("text",))
 def _click_text(spec: StepSpec, ctx) -> None:
     """Smart click by visible text. Walks every interactive element on the

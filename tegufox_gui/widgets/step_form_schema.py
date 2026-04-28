@@ -258,6 +258,29 @@ STEP_FORM: dict = {
               choices=["", "anthropic", "openai", "gemini"], default=""),
         Field("model", "string"),
     ],
+    "ai.verify": [
+        Field("expected", "string", required=True, multiline=True,
+              placeholder='e.g. "user is signed in to x.com and on home timeline"'),
+        Field("set", "string",
+              help="(optional) var to receive the PASS/FAIL response"),
+        Field("on_fail", "select", choices=["abort", "warn"], default="abort"),
+        Field("provider", "select",
+              choices=["", "anthropic", "openai", "gemini"], default=""),
+        Field("model", "string"),
+    ],
+
+    # ---- Browser steps (cont.) ----
+    "browser.fill_form_by_labels": [
+        Field("fields", "code", required=True, multiline=True,
+              placeholder='{"Email": "{{ vars.email }}", "Password": "{{ vars.pw }}"}',
+              help="Map of visible-label-text → value"),
+        Field("use_ai", "bool", default=False,
+              help="If heuristic fails, ask AI for the field selector"),
+        Field("human", "bool", default=False),
+        Field("timeout_ms", "int", default=5000),
+        Field("provider", "select",
+              choices=["", "anthropic", "openai", "gemini"], default=""),
+    ],
 
     # ---- State steps ----
     "state.save": [

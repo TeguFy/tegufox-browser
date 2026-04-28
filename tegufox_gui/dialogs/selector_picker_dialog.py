@@ -407,7 +407,31 @@ class SelectorPickerDialog(QDialog):
         self.picked_html_view.setPlaceholderText("Click an element in the browser; its outerHTML will appear here.")
         self.picked_html_view.setMaximumHeight(110)
         hg.addWidget(self.picked_html_view)
+        explain_row = QHBoxLayout()
+        explain_row.addStretch(1)
+        self.explain_btn = QPushButton("🤖 AI Explain & Suggest")
+        self.explain_btn.setToolTip(
+            "Send the picked element to the configured LLM provider; it "
+            "returns what the element is and 2-3 stable selectors you can "
+            "use. Requires ANTHROPIC_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY."
+        )
+        self.explain_btn.setEnabled(False)
+        self.explain_btn.clicked.connect(self._on_ai_explain)
+        explain_row.addWidget(self.explain_btn)
+        hg.addLayout(explain_row)
         layout.addWidget(html_group)
+
+        # ---- AI explanation panel ---------------------------------------
+        ai_group = QGroupBox("AI explanation (optional)")
+        ag = QVBoxLayout(ai_group)
+        self.ai_explanation = QPlainTextEdit()
+        self.ai_explanation.setReadOnly(True)
+        self.ai_explanation.setMaximumHeight(110)
+        self.ai_explanation.setPlaceholderText(
+            "Click 'AI Explain & Suggest' after picking an element."
+        )
+        ag.addWidget(self.ai_explanation)
+        layout.addWidget(ai_group)
 
         # ---- Paste HTML to detect ---------------------------------------
         paste_group = QGroupBox("Or paste HTML to detect selector")
@@ -528,6 +552,40 @@ class SelectorPickerDialog(QDialog):
         self.status_label.setText("Picked! Try 'Test Click', or pick another element.")
         self.use_btn.setEnabled(True)
         self.test_btn.setEnabled(True)
+        self.explain_btn.setEnabled(bool(html))
+
+    def _on_ai_explain(self) -> None:
+        html = self.picked_html_view.toPlainText().strip()
+        if not html:
+            self.status_label.setText("No picked HTML to explain — pick an element first.")
+            return
+        self.explain_btn.setEnabled(False)
+        self.ai_explanation.setPlainText("Asking AI…")
+        try:
+            from tegufox_flow.steps.ai_providers import ask_llm
+            system = (
+                "You are an HTML inspector. Given an element's outerHTML, "
+                "respond in this exact format:\n"
+                "  TYPE: <one-line description of what this element is>\n"
+                "  PURPOSE: <one-line: what clicking/using it does>\n"
+                "  SELECTORS:\n"
+                "  1. <stable CSS selector>\n"
+                "  2. <fallback CSS selector>\n"
+                "  3. <another fallback>\n"
+                "Stable selectors prefer data-testid, id, aria-label, "
+                "name, or unique class chain. Avoid nth-child if possible."
+            )
+            answer = ask_llm(
+                system=system, user=f"OUTERHTML:\n{html[:4000]}",
+                max_tokens=300,
+            )
+            self.ai_explanation.setPlainText(answer)
+            self.status_label.setText("AI explanation ready.")
+        except Exception as e:
+            self.ai_explanation.setPlainText(f"AI failed: {type(e).__name__}: {e}")
+            self.status_label.setText("AI failed — see panel.")
+        finally:
+            self.explain_btn.setEnabled(True)
 
     def _on_crashed(self, msg: str) -> None:
         self.status_label.setText(f"Error: {msg}")

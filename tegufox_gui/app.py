@@ -96,6 +96,10 @@ class TegufoxProfileManager(QMainWindow):
         self.schedules_page = SchedulesPage()
         self.content_stack.addWidget(self.schedules_page)
 
+        from tegufox_gui.pages.flow_generator_page import FlowGeneratorPage
+        self.flow_gen_page = FlowGeneratorPage()
+        self.content_stack.addWidget(self.flow_gen_page)
+
         # Background scheduler daemon — polls flow_schedules every 30s.
         try:
             from tegufox_flow.scheduler import SchedulerDaemon
@@ -176,6 +180,11 @@ class TegufoxProfileManager(QMainWindow):
         schedules_btn.clicked.connect(lambda: self.switch_page(8))
         layout.addWidget(schedules_btn)
         self.nav_buttons.append(schedules_btn)
+
+        flow_gen_btn = SidebarButton("AI Flow Gen", "🤖")
+        flow_gen_btn.clicked.connect(lambda: self.switch_page(9))
+        layout.addWidget(flow_gen_btn)
+        self.nav_buttons.append(flow_gen_btn)
 
         proxies_btn = SidebarButton("Proxies", "🔌")
         proxies_btn.clicked.connect(lambda: self.switch_page(4))

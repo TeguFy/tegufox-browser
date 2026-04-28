@@ -149,6 +149,51 @@ def _ai_extract(spec: StepSpec, ctx) -> None:
 # ai.ask — generic Q&A. Sends DOM + question, stores answer.
 # ---------------------------------------------------------------------------
 
+@register("ai.verify", required=("expected",))
+def _ai_verify(spec: StepSpec, ctx) -> None:
+    """Assert that the current page matches an expected outcome described
+    in plain language. AI returns yes/no plus a one-sentence reason. The
+    step fails if the AI says no.
+
+    Useful at the end of a flow to confirm success without writing a
+    chain of brittle wait_for/extract steps.
+
+    Examples:
+      expected: "the user is signed in to x.com and on the home timeline"
+      expected: "the order confirmation page is showing with a total"
+    """
+    p = spec.params
+    expected = ctx.render(p["expected"])
+    out_var = p.get("set")  # optional
+    model = p.get("model")
+    provider = p.get("provider")
+    on_fail = (p.get("on_fail") or "abort").lower()  # abort | warn
+
+    html = ctx.page.content()
+    system = (
+        "You are a flow-verification assistant. Given a page and an expected "
+        "outcome, answer with EXACTLY this format:\n"
+        "  PASS — <one-sentence reason>\n"
+        "  or\n"
+        "  FAIL — <one-sentence reason>\n"
+        "No other prefix, no markdown."
+    )
+    user = f"EXPECTED: {expected}\n\nHTML:\n{_truncate_dom(html)}"
+    answer = _ask_llm(system=system, user=user, max_tokens=200,
+                      model=model, provider=provider).strip()
+
+    if out_var:
+        ctx.set_var(out_var, answer)
+    ctx.logger.info(f"ai.verify: {expected[:60]!r} → {answer[:120]!r}")
+
+    if answer.upper().startswith("PASS"):
+        return
+    if on_fail == "warn":
+        ctx.logger.warning(f"ai.verify FAIL (warn-only): {answer}")
+        return
+    raise RuntimeError(f"ai.verify failed: {answer}")
+
+
 @register("ai.ask", required=("question", "set"))
 def _ai_ask(spec: StepSpec, ctx) -> None:
     p = spec.params
