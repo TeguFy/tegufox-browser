@@ -195,3 +195,127 @@ def dispatch_action(action: AgentAction, ctx) -> Dict[str, Any]:
         except Exception:
             out["value"] = None
     return out
+
+
+# ---------------------------------------------------------------------------
+# 3. Observe + decide
+# ---------------------------------------------------------------------------
+
+# Module-level alias so tests can patch it.
+from tegufox_flow.steps.ai_providers import ask_llm  # noqa: F401
+
+_DOM_LIMIT = 8000
+_HISTORY_KEEP = 10
+_MAX_PARSE_ATTEMPTS = 3
+
+
+def _truncate_dom(html: str, limit: int = _DOM_LIMIT) -> str:
+    if not html:
+        return ""
+    if len(html) <= limit:
+        return html
+    head = html[: limit // 2]
+    tail = html[-limit // 2:]
+    return f"{head}\n…[{len(html) - limit} chars truncated]…\n{tail}"
+
+
+def _observe(page) -> Dict[str, Any]:
+    """Snapshot the current page for the LLM."""
+    try:
+        url = page.url or ""
+    except Exception:
+        url = ""
+    try:
+        title = (page.title() or "")[:200]
+    except Exception:
+        title = ""
+    try:
+        dom = _truncate_dom(page.content() or "")
+    except Exception:
+        dom = ""
+    return {"url": url, "title": title, "dom": dom}
+
+
+_SYSTEM_TEMPLATE = (
+    "You are a browser-automation agent.\n"
+    "GOAL: {goal}\n\n"
+    "On each turn output ONE JSON object with keys:\n"
+    "  reasoning  — one short sentence\n"
+    "  verb       — exactly one of: goto, click, click_text, type, scroll, "
+    "wait_for, read_text, screenshot, done, ask_user\n"
+    "  args       — verb-specific keys:\n"
+    "    goto:        url, wait_until?\n"
+    "    click:       selector\n"
+    "    click_text:  text, role?\n"
+    "    type:        selector, text\n"
+    "    scroll:      direction|to, pixels?\n"
+    "    wait_for:    selector, state?\n"
+    "    read_text:   selector\n"
+    "    screenshot:  path\n"
+    "    done:        reason\n"
+    "    ask_user:    question\n\n"
+    "Emit verb='done' with args.reason when goal achieved.\n"
+    "Emit verb='ask_user' if you need info from the user (2FA, etc).\n"
+    "Output ONLY the JSON, no markdown, no prose."
+)
+
+
+def _format_history(history: List[Dict[str, Any]]) -> str:
+    if not history:
+        return "(no prior turns)"
+    lines = []
+    for i, turn in enumerate(history):
+        action = turn.get("action") or {}
+        verb = action.get("verb", "?")
+        args = action.get("args", {})
+        result = turn.get("result") or {}
+        url = (turn.get("obs") or {}).get("url", "")
+        lines.append(
+            f"  Step {i+1}: at {url} → {verb}({json.dumps(args)})"
+            f"  result={json.dumps(result)[:100]}"
+        )
+    return "\n".join(lines)
+
+
+def _decide(
+    *,
+    history: List[Dict[str, Any]],
+    obs: Dict[str, Any],
+    goal: str,
+    provider: Optional[str],
+    model: Optional[str],
+) -> AgentAction:
+    """Run one LLM turn and return the parsed AgentAction.
+    Retries up to 2 times on ParseError, feeding back the parse error."""
+
+    recent = history[-_HISTORY_KEEP:]
+    history_text = _format_history(recent)
+    base_user = (
+        f"PRIOR TURNS:\n{history_text}\n\n"
+        f"CURRENT PAGE:\n"
+        f"URL: {obs.get('url')}\n"
+        f"TITLE: {obs.get('title')}\n"
+        f"DOM:\n{obs.get('dom')}\n\n"
+        f"Next action JSON:"
+    )
+    system = _SYSTEM_TEMPLATE.format(goal=goal)
+
+    last_error = None
+    user = base_user
+    for attempt in range(_MAX_PARSE_ATTEMPTS):
+        raw = ask_llm(
+            system=system, user=user,
+            max_tokens=512, provider=provider, model=model,
+        )
+        try:
+            return parse_action(raw)
+        except ParseError as e:
+            last_error = e
+            user = (
+                base_user
+                + f"\n\nPRIOR ATTEMPT FAILED: {e}\n"
+                  "Return STRICTLY valid JSON matching the schema."
+            )
+    raise ParseError(
+        f"LLM produced malformed output {_MAX_PARSE_ATTEMPTS} times: {last_error}"
+    )
