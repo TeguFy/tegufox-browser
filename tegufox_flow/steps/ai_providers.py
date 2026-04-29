@@ -217,3 +217,49 @@ def ask_llm(
     if fn is None:
         raise RuntimeError(f"unknown AI provider: {name!r}")
     return fn(system, user, max_tokens, model)
+
+
+def test_provider(
+    provider: str,
+    api_key: str,
+    model: Optional[str] = None,
+    base_url: Optional[str] = None,
+) -> tuple:
+    """Round-trip a tiny ping using explicit credentials. Returns (ok, message).
+
+    Used by Settings UI to verify a freshly-entered api_key/model before
+    persisting it. Independent of env vars and settings.conf — only the
+    explicit args are used.
+    """
+    if not api_key:
+        return False, "API key is empty"
+    name = "openai_compatible" if provider == "openai" else provider
+    try:
+        if name == "anthropic":
+            import anthropic
+            client = anthropic.Anthropic(api_key=api_key)
+            m = model or _DEFAULT_MODELS["anthropic"]
+            client.messages.create(
+                model=m, max_tokens=8,
+                messages=[{"role": "user", "content": "ping"}],
+            )
+            return True, f"OK ({m})"
+        if name == "openai_compatible":
+            from openai import OpenAI
+            client = (OpenAI(api_key=api_key, base_url=base_url)
+                      if base_url else OpenAI(api_key=api_key))
+            m = model or _DEFAULT_MODELS["openai"]
+            client.chat.completions.create(
+                model=m, max_tokens=8,
+                messages=[{"role": "user", "content": "ping"}],
+            )
+            return True, f"OK ({m})"
+        if name == "gemini":
+            from google import genai
+            client = genai.Client(api_key=api_key)
+            m = model or _DEFAULT_MODELS["gemini"]
+            client.models.generate_content(model=m, contents="ping")
+            return True, f"OK ({m})"
+        return False, f"unknown provider: {provider!r}"
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"
