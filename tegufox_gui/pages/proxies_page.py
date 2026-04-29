@@ -308,7 +308,7 @@ class ProxiesWidget(QWidget):
                 selection-background-color: {DarkPalette.ACCENT};
             }}
         """)
-        self.sort_combo.currentIndexChanged.connect(self._apply_filter)
+        self.sort_combo.currentIndexChanged.connect(self._on_filter_changed)
         hdr.addWidget(self.sort_combo)
 
         # Page-size dropdown (spec §3.1)
@@ -343,7 +343,7 @@ class ProxiesWidget(QWidget):
             }}
             QLineEdit:focus {{ border-color: {DarkPalette.ACCENT}; }}
         """)
-        self.search_input.textChanged.connect(self._apply_filter)
+        self.search_input.textChanged.connect(self._on_filter_changed)
         hdr.addWidget(self.search_input)
         
         hdr.addStretch()
@@ -652,6 +652,11 @@ class ProxiesWidget(QWidget):
             return
         self._page_size = self._PAGE_SIZE_OPTIONS[index]
         QSettings("Tegufox", "GUI").setValue("proxies/page_size", self._page_size)
+        self._current_page = 1
+        self._apply_filter()
+
+    def _on_filter_changed(self, *_):
+        """Search or sort changed — reset to page 1, re-render (spec §6.1)."""
         self._current_page = 1
         self._apply_filter()
 
@@ -1038,9 +1043,17 @@ Notes: {data.get('notes', '—')}"""
                 return
             
             success_count, errors = self.proxy_manager.bulk_import(lines)
-            
+
+            # Spec §6.1: after bulk import, surface freshly imported proxies
+            # by switching to "Date newest" + first page.
+            if success_count > 0:
+                self.sort_combo.blockSignals(True)
+                self.sort_combo.setCurrentIndex(self._SORT_NEWEST_INDEX)
+                self.sort_combo.blockSignals(False)
+                self._current_page = 1
+
             self.refresh_proxies()
-            
+
             msg = f"Successfully imported {success_count} proxy(ies)."
             if errors:
                 msg += f"\n\nErrors:\n" + "\n".join(errors[:10])
