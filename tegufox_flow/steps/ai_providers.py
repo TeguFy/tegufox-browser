@@ -19,7 +19,7 @@ Provider selection priority:
 
 from __future__ import annotations
 import os
-from typing import Callable, Optional
+from typing import Callable, List, Optional
 
 
 _DEFAULT_MODELS = {
@@ -30,6 +30,62 @@ _DEFAULT_MODELS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Settings-aware credential / model lookup
+# ---------------------------------------------------------------------------
+# Env vars always win over settings.conf so power users can override per
+# shell session, but GUI-only users can store keys in settings.conf via
+# the Settings page.
+
+def _settings_ai() -> dict:
+    """Read the `ai` block from settings.conf; empty dict if absent."""
+    try:
+        from tegufox_core.runtime_settings import get_setting
+        block = get_setting("ai", {}) or {}
+        return block if isinstance(block, dict) else {}
+    except Exception:
+        return {}
+
+
+def _provider_creds(name: str) -> dict:
+    """Return the per-provider settings sub-dict (api_key / model / base_url)."""
+    block = _settings_ai().get(name) or {}
+    return block if isinstance(block, dict) else {}
+
+
+def _api_key_for(provider: str, env_var: str) -> Optional[str]:
+    return os.environ.get(env_var) or _provider_creds(provider).get("api_key") or None
+
+
+def _model_for(provider: str, explicit: Optional[str]) -> str:
+    if explicit:
+        return explicit
+    cfg = _provider_creds(provider).get("model")
+    if cfg:
+        return cfg
+    return _DEFAULT_MODELS[provider]
+
+
+def list_configured_providers() -> List[str]:
+    """Return the providers that have an API key (via env OR settings)."""
+    out: List[str] = []
+    if _api_key_for("anthropic", "ANTHROPIC_API_KEY"):
+        out.append("anthropic")
+    if _api_key_for("openai", "OPENAI_API_KEY") or \
+            _api_key_for("openai_compatible", "OPENAI_API_KEY"):
+        out.append("openai")
+    if (os.environ.get("GEMINI_API_KEY")
+            or os.environ.get("GOOGLE_API_KEY")
+            or _provider_creds("gemini").get("api_key")):
+        out.append("gemini")
+    return out
+
+
+def _settings_default_provider() -> Optional[str]:
+    val = (_settings_ai().get("default_provider") or "").strip().lower()
+    return val or None
+
+
 def _resolve_provider(explicit: Optional[str] = None) -> str:
     if explicit:
         if explicit == "openai":
@@ -38,30 +94,39 @@ def _resolve_provider(explicit: Optional[str] = None) -> str:
     env_choice = (os.environ.get("TEGUFOX_AI_PROVIDER") or "").strip().lower()
     if env_choice:
         return "openai_compatible" if env_choice == "openai" else env_choice
-    if os.environ.get("ANTHROPIC_API_KEY"):
+    settings_default = _settings_default_provider()
+    if settings_default:
+        return "openai_compatible" if settings_default == "openai" else settings_default
+    if _api_key_for("anthropic", "ANTHROPIC_API_KEY"):
         return "anthropic"
-    if os.environ.get("OPENAI_API_KEY"):
+    if _api_key_for("openai", "OPENAI_API_KEY"):
         return "openai_compatible"
-    if os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"):
+    if (os.environ.get("GEMINI_API_KEY")
+            or os.environ.get("GOOGLE_API_KEY")
+            or _provider_creds("gemini").get("api_key")):
         return "gemini"
     raise RuntimeError(
         "No AI provider configured. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, "
-        "or GEMINI_API_KEY (or pass provider=... on the step)."
+        "or GEMINI_API_KEY in your shell, OR add an API key via Settings → "
+        "AI Providers."
     )
 
 
 def _ask_anthropic(system: str, user: str, max_tokens: int,
                    model: Optional[str]) -> str:
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    api_key = _api_key_for("anthropic", "ANTHROPIC_API_KEY")
     if not api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY not set")
+        raise RuntimeError(
+            "Anthropic API key not set (env ANTHROPIC_API_KEY or "
+            "Settings → AI Providers → Anthropic)."
+        )
     try:
         import anthropic
     except ImportError as e:
         raise RuntimeError("anthropic SDK not installed") from e
     client = anthropic.Anthropic(api_key=api_key)
     resp = client.messages.create(
-        model=model or _DEFAULT_MODELS["anthropic"],
+        model=_model_for("anthropic", model),
         max_tokens=max_tokens,
         system=system,
         messages=[{"role": "user", "content": user}],
@@ -75,17 +140,23 @@ def _ask_anthropic(system: str, user: str, max_tokens: int,
 
 def _ask_openai_compatible(system: str, user: str, max_tokens: int,
                            model: Optional[str]) -> str:
-    api_key = os.environ.get("OPENAI_API_KEY")
+    api_key = (_api_key_for("openai", "OPENAI_API_KEY")
+               or _api_key_for("openai_compatible", "OPENAI_API_KEY"))
     if not api_key:
-        raise RuntimeError("OPENAI_API_KEY not set")
-    base_url = os.environ.get("OPENAI_BASE_URL") or None
+        raise RuntimeError(
+            "OpenAI API key not set (env OPENAI_API_KEY or "
+            "Settings → AI Providers → OpenAI)."
+        )
+    base_url = (os.environ.get("OPENAI_BASE_URL")
+                or _provider_creds("openai").get("base_url")
+                or None)
     try:
         from openai import OpenAI
     except ImportError as e:
         raise RuntimeError("openai SDK not installed") from e
     client = OpenAI(api_key=api_key, base_url=base_url) if base_url else OpenAI(api_key=api_key)
     resp = client.chat.completions.create(
-        model=model or _DEFAULT_MODELS["openai_compatible"],
+        model=_model_for("openai_compatible", model),
         max_tokens=max_tokens,
         messages=[
             {"role": "system", "content": system},
@@ -98,9 +169,13 @@ def _ask_openai_compatible(system: str, user: str, max_tokens: int,
 def _ask_gemini(system: str, user: str, max_tokens: int,
                 model: Optional[str]) -> str:
     api_key = (os.environ.get("GEMINI_API_KEY")
-               or os.environ.get("GOOGLE_API_KEY"))
+               or os.environ.get("GOOGLE_API_KEY")
+               or _provider_creds("gemini").get("api_key"))
     if not api_key:
-        raise RuntimeError("GEMINI_API_KEY (or GOOGLE_API_KEY) not set")
+        raise RuntimeError(
+            "Gemini API key not set (env GEMINI_API_KEY/GOOGLE_API_KEY or "
+            "Settings → AI Providers → Gemini)."
+        )
     try:
         from google import genai
         from google.genai import types
@@ -112,7 +187,7 @@ def _ask_gemini(system: str, user: str, max_tokens: int,
         max_output_tokens=max_tokens,
     )
     resp = client.models.generate_content(
-        model=model or _DEFAULT_MODELS["gemini"],
+        model=_model_for("gemini", model),
         contents=user,
         config=cfg,
     )

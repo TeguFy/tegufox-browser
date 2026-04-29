@@ -213,7 +213,13 @@ class FlowGeneratorPage(QWidget):
         opts = QHBoxLayout()
         opts.addWidget(QLabel("Provider:"))
         self.provider_combo = QComboBox()
-        self.provider_combo.addItems(["(auto)", "anthropic", "openai", "gemini"])
+        self.provider_combo.addItem("(auto)", "")
+        try:
+            from tegufox_flow.steps.ai_providers import list_configured_providers
+            for p in list_configured_providers():
+                self.provider_combo.addItem(p, p)
+        except Exception:
+            pass
         opts.addWidget(self.provider_combo)
         opts.addWidget(QLabel("Model:"))
         self.model_edit = QLineEdit()

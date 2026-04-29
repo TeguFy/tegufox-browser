@@ -48,6 +48,12 @@ _DEFAULT_SETTINGS = {
         "firefox/linux":   0.10,
         "safari/macos":    0.20,
     },
+    "ai": {
+        "default_provider": "",  # empty = auto-detect
+        "anthropic": {"api_key": "", "model": "claude-sonnet-4-6"},
+        "openai":    {"api_key": "", "base_url": "", "model": "gpt-4o-mini"},
+        "gemini":    {"api_key": "", "model": "gemini-2.5-flash"},
+    },
 }
 
 _SETTINGS_PATH = Path("data/settings.conf")
@@ -260,6 +266,63 @@ class SettingsWidget(QWidget):
         mkt_grp.setLayout(mkt_lay)
         root.addWidget(mkt_grp)
 
+        # ---- AI Providers ----------------------------------------------
+        ai_grp = QGroupBox("AI Providers")
+        ai_lay = QGridLayout()
+        ai_lay.setSpacing(8)
+        from PyQt6.QtWidgets import QComboBox
+
+        ai_lay.addWidget(QLabel("Default provider:", styleSheet=LBL), 0, 0)
+        self.ai_default_combo = QComboBox()
+        self.ai_default_combo.addItem("(auto-detect)", "")
+        for p in ("anthropic", "openai", "gemini"):
+            self.ai_default_combo.addItem(p, p)
+        ai_lay.addWidget(self.ai_default_combo, 0, 1, 1, 2)
+
+        # Anthropic row
+        ai_lay.addWidget(QLabel("Anthropic", styleSheet=LBL), 1, 0)
+        self.ai_anth_key = QLineEdit()
+        self.ai_anth_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.ai_anth_key.setPlaceholderText("sk-ant-... (or env ANTHROPIC_API_KEY)")
+        self.ai_anth_model = QLineEdit()
+        self.ai_anth_model.setPlaceholderText("claude-sonnet-4-6")
+        ai_lay.addWidget(QLabel("API key:"), 1, 1)
+        ai_lay.addWidget(self.ai_anth_key, 1, 2)
+        ai_lay.addWidget(QLabel("Model:"), 2, 1)
+        ai_lay.addWidget(self.ai_anth_model, 2, 2)
+
+        # OpenAI row
+        ai_lay.addWidget(QLabel("OpenAI", styleSheet=LBL), 3, 0)
+        self.ai_oai_key = QLineEdit()
+        self.ai_oai_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.ai_oai_key.setPlaceholderText("sk-... (or env OPENAI_API_KEY)")
+        self.ai_oai_base = QLineEdit()
+        self.ai_oai_base.setPlaceholderText("(optional) https://api.groq.com/openai/v1")
+        self.ai_oai_model = QLineEdit()
+        self.ai_oai_model.setPlaceholderText("gpt-4o-mini")
+        ai_lay.addWidget(QLabel("API key:"), 3, 1)
+        ai_lay.addWidget(self.ai_oai_key, 3, 2)
+        ai_lay.addWidget(QLabel("Base URL:"), 4, 1)
+        ai_lay.addWidget(self.ai_oai_base, 4, 2)
+        ai_lay.addWidget(QLabel("Model:"), 5, 1)
+        ai_lay.addWidget(self.ai_oai_model, 5, 2)
+
+        # Gemini row
+        ai_lay.addWidget(QLabel("Gemini", styleSheet=LBL), 6, 0)
+        self.ai_gem_key = QLineEdit()
+        self.ai_gem_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.ai_gem_key.setPlaceholderText("AIza... (or env GEMINI_API_KEY)")
+        self.ai_gem_model = QLineEdit()
+        self.ai_gem_model.setPlaceholderText("gemini-2.5-flash")
+        ai_lay.addWidget(QLabel("API key:"), 6, 1)
+        ai_lay.addWidget(self.ai_gem_key, 6, 2)
+        ai_lay.addWidget(QLabel("Model:"), 7, 1)
+        ai_lay.addWidget(self.ai_gem_model, 7, 2)
+
+        ai_lay.setColumnStretch(2, 1)
+        ai_grp.setLayout(ai_lay)
+        root.addWidget(ai_grp)
+
         root.addStretch()
         scroll.setWidget(content)
         outer.addWidget(scroll)
@@ -348,6 +411,14 @@ class SettingsWidget(QWidget):
                     settings["rules"].update(loaded["rules"])
                 if "market_weights" in loaded:
                     settings["market_weights"].update(loaded["market_weights"])
+                if "ai" in loaded and isinstance(loaded["ai"], dict):
+                    # merge per-provider sub-dicts so missing keys keep defaults
+                    for prov in ("anthropic", "openai", "gemini"):
+                        if prov in loaded["ai"] and isinstance(loaded["ai"][prov], dict):
+                            settings["ai"][prov].update(loaded["ai"][prov])
+                    if "default_provider" in loaded["ai"]:
+                        settings["ai"]["default_provider"] = \
+                            loaded["ai"]["default_provider"]
             except Exception:
                 pass
         self.profiles_dir_input.setText(str(settings["profiles_dir"]))
@@ -359,6 +430,22 @@ class SettingsWidget(QWidget):
         for key, spin in self._weight_spins.items():
             spin.setValue(float(settings["market_weights"].get(key, 0.0)))
 
+        # AI section
+        ai = settings.get("ai", {})
+        idx = self.ai_default_combo.findData(ai.get("default_provider", ""))
+        if idx >= 0:
+            self.ai_default_combo.setCurrentIndex(idx)
+        anth = ai.get("anthropic", {})
+        oai = ai.get("openai", {})
+        gem = ai.get("gemini", {})
+        self.ai_anth_key.setText(anth.get("api_key", ""))
+        self.ai_anth_model.setText(anth.get("model", ""))
+        self.ai_oai_key.setText(oai.get("api_key", ""))
+        self.ai_oai_base.setText(oai.get("base_url", ""))
+        self.ai_oai_model.setText(oai.get("model", ""))
+        self.ai_gem_key.setText(gem.get("api_key", ""))
+        self.ai_gem_model.setText(gem.get("model", ""))
+
     def _save_settings(self):
         settings = {
             "profiles_dir": self.profiles_dir_input.text(),
@@ -367,6 +454,22 @@ class SettingsWidget(QWidget):
             "disable_popups": self.disable_popups_cb.isChecked(),
             "rules": {r: cb.isChecked() for r, cb in self._rule_cbs.items()},
             "market_weights": {k: sp.value() for k, sp in self._weight_spins.items()},
+            "ai": {
+                "default_provider": self.ai_default_combo.currentData() or "",
+                "anthropic": {
+                    "api_key": self.ai_anth_key.text(),
+                    "model":   self.ai_anth_model.text() or "claude-sonnet-4-6",
+                },
+                "openai": {
+                    "api_key": self.ai_oai_key.text(),
+                    "base_url": self.ai_oai_base.text(),
+                    "model":   self.ai_oai_model.text() or "gpt-4o-mini",
+                },
+                "gemini": {
+                    "api_key": self.ai_gem_key.text(),
+                    "model":   self.ai_gem_model.text() or "gemini-2.5-flash",
+                },
+            },
         }
         _SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
         _SETTINGS_PATH.write_text(pprint.pformat(settings, sort_dicts=True))

@@ -125,7 +125,15 @@ class AgentPage(QWidget):
         opt.addRow("", self.record_chk)
 
         self.provider_combo = QComboBox()
-        self.provider_combo.addItems(["(auto)", "anthropic", "openai", "gemini"])
+        self.provider_combo.addItem("(auto)", "")
+        try:
+            from tegufox_flow.steps.ai_providers import list_configured_providers
+            for p in list_configured_providers():
+                self.provider_combo.addItem(p, p)
+        except Exception:
+            pass
+        if self.provider_combo.count() == 1:
+            self.provider_combo.addItem("⚠ none configured — Settings → AI", "")
         opt.addRow("Provider", self.provider_combo)
 
         self.model_edit = QLineEdit()
@@ -183,8 +191,7 @@ class AgentPage(QWidget):
             self.status_label.setText("Pick a profile.")
             return
 
-        provider = self.provider_combo.currentText()
-        provider = "" if provider == "(auto)" else provider
+        provider = self.provider_combo.currentData() or ""
 
         self.trace_view.clear()
         self._stop_event = threading.Event()
