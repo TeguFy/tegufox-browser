@@ -18,6 +18,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from tegufox_flow.steps import StepSpec, get_handler
+
 
 # ---------------------------------------------------------------------------
 # 1. Action types + parser
@@ -103,3 +105,93 @@ class AgentResult:
     steps: int = 0
     history: List[Dict[str, Any]] = field(default_factory=list)
     flow_yaml: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# 2. Verb dispatch — verb → step handler invocation
+# ---------------------------------------------------------------------------
+
+
+class DispatchError(RuntimeError):
+    """Tried to dispatch an unknown / unsupported verb."""
+
+
+def _build_spec(verb: str, args: Dict[str, Any]):
+    """Translate an agent verb + args into a StepSpec the existing step
+    handlers can consume. Each branch enforces the agent's defaults
+    (force=True for click, human=False for type)."""
+    if verb == "goto":
+        params = {"url": args["url"]}
+        if "wait_until" in args:
+            params["wait_until"] = args["wait_until"]
+        return StepSpec(id="agent_goto", type="browser.goto", params=params)
+
+    if verb == "click":
+        return StepSpec(id="agent_click", type="browser.click",
+                        params={"selector": args["selector"], "force": True,
+                                "human": False})
+
+    if verb == "click_text":
+        params = {"text": args["text"], "force": True}
+        if "role" in args:
+            params["role"] = args["role"]
+        return StepSpec(id="agent_click_text", type="browser.click_text",
+                        params=params)
+
+    if verb == "type":
+        return StepSpec(id="agent_type", type="browser.type",
+                        params={"selector": args["selector"],
+                                "text": args["text"], "human": False})
+
+    if verb == "scroll":
+        params = {}
+        for k in ("direction", "pixels", "to"):
+            if k in args:
+                params[k] = args[k]
+        return StepSpec(id="agent_scroll", type="browser.scroll",
+                        params=params)
+
+    if verb == "wait_for":
+        params = {"selector": args["selector"]}
+        if "state" in args:
+            params["state"] = args["state"]
+        return StepSpec(id="agent_wait_for", type="browser.wait_for",
+                        params=params)
+
+    if verb == "read_text":
+        return StepSpec(id="agent_read_text", type="extract.read_text",
+                        params={"selector": args["selector"],
+                                "set": "_agent_read"})
+
+    if verb == "screenshot":
+        return StepSpec(id="agent_screenshot", type="browser.screenshot",
+                        params={"path": args["path"]})
+
+    raise DispatchError(f"no step mapping for verb {verb!r}")
+
+
+def dispatch_action(action: AgentAction, ctx) -> Dict[str, Any]:
+    """Execute an AgentAction against the given FlowContext-shaped object.
+    Returns a result dict: terminal verbs (done/ask_user) return
+    `{terminal: <verb>, ...}`; other verbs return `{ok: True, value?: any}`.
+    """
+    if action.verb == "done":
+        return {"terminal": "done", "reason": action.args.get("reason", "")}
+    if action.verb == "ask_user":
+        return {"terminal": "ask_user",
+                "question": action.args.get("question", "")}
+
+    if action.verb not in AGENT_VERBS:
+        raise DispatchError(f"unknown verb {action.verb!r}")
+
+    spec = _build_spec(action.verb, action.args)
+    handler = get_handler(spec.type)
+    handler(spec, ctx)
+
+    out: Dict[str, Any] = {"ok": True}
+    if action.verb == "read_text":
+        try:
+            out["value"] = ctx.vars.get("_agent_read")
+        except Exception:
+            out["value"] = None
+    return out
