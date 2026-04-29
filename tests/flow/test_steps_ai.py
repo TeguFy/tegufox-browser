@@ -3,12 +3,24 @@ Real LLM calls aren't tested here (network + cost); we mock the
 helper that wraps Anthropic.
 """
 import os
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from tegufox_flow.steps import StepSpec, get_handler
 import tegufox_flow.steps.ai  # noqa  -- registers
+
+
+@pytest.fixture(autouse=True)
+def _isolate_settings(tmp_path, monkeypatch):
+    """Provider resolution reads settings.conf as a fallback. Tests assume
+    env-only credential lookup, so redirect SETTINGS_PATH at a non-existent
+    file in tmp_path for every test in this module.
+    """
+    import tegufox_core.runtime_settings as rs
+    monkeypatch.setattr(rs, "SETTINGS_PATH", tmp_path / "settings.conf")
+    yield
 
 
 def _ctx_with_page(html: str = "<html><body><button>OK</button></body></html>"):
