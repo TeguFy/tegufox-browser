@@ -499,6 +499,33 @@ class ProxiesWidget(QWidget):
         self._list_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         scroll.setWidget(self._list_widget)
         layout.addWidget(scroll)
+
+        # Pagination footer (spec §3.2). Hidden until first render decides
+        # whether it's needed.
+        self.pagination_footer = QWidget()
+        self.pagination_footer.setStyleSheet(
+            f"background-color: {DarkPalette.BACKGROUND};"
+        )
+        footer_row = QHBoxLayout(self.pagination_footer)
+        footer_row.setContentsMargins(0, 6, 0, 0)
+        footer_row.setSpacing(6)
+
+        self.page_bar_container = QWidget()
+        self.page_bar_layout = QHBoxLayout(self.page_bar_container)
+        self.page_bar_layout.setContentsMargins(0, 0, 0, 0)
+        self.page_bar_layout.setSpacing(4)
+        footer_row.addWidget(self.page_bar_container)
+
+        footer_row.addStretch()
+
+        self.page_status_lbl = QLabel("")
+        self.page_status_lbl.setStyleSheet(
+            f"color: {DarkPalette.TEXT_DIM}; font-size: 11px;"
+        )
+        footer_row.addWidget(self.page_status_lbl)
+
+        self.pagination_footer.setVisible(False)
+        layout.addWidget(self.pagination_footer)
     
     def load_proxies(self):
         """Load all proxies from database"""
