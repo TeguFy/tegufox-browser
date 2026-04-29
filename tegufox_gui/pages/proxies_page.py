@@ -252,7 +252,8 @@ class ProxiesWidget(QWidget):
     """Proxy management page"""
 
     _SORT_OPTIONS = ["Name A→Z", "Name Z→A", "Date newest", "Date oldest"]
-    _PAGE_SIZE_OPTIONS = [50, 100, 200, 0]  # 0 sentinel = "All"
+    _PAGE_SIZE_ALL = 0  # sentinel for "All" mode
+    _PAGE_SIZE_OPTIONS = [50, 100, 200, _PAGE_SIZE_ALL]
     _PAGE_SIZE_LABELS = ["50", "100", "200", "All"]
     _DEFAULT_PAGE_SIZE = 100
     _SORT_NEWEST_INDEX = 2  # matches "Date newest" in _SORT_OPTIONS
@@ -672,7 +673,7 @@ class ProxiesWidget(QWidget):
 
         self._visible_filtered = visible
 
-        if self._page_size == 0:
+        if self._page_size == self._PAGE_SIZE_ALL:
             total_pages = 1
         else:
             total_pages = max(1, (len(visible) + self._page_size - 1) // self._page_size)
@@ -695,7 +696,7 @@ class ProxiesWidget(QWidget):
             card.setVisible(False)
 
         # 3. Compute the slice for the current page.
-        if self._page_size == 0:
+        if self._page_size == self._PAGE_SIZE_ALL:
             slice_cards = self._visible_filtered
             total_pages = 1
         else:
@@ -716,7 +717,7 @@ class ProxiesWidget(QWidget):
         total = len(self._visible_filtered)
         if total == 0:
             self.page_status_lbl.setText("showing 0-0 of 0")
-        elif self._page_size == 0:
+        elif self._page_size == self._PAGE_SIZE_ALL:
             self.page_status_lbl.setText(f"showing 1-{total} of {total}")
         else:
             shown_start = (self._current_page - 1) * self._page_size + 1
@@ -726,8 +727,8 @@ class ProxiesWidget(QWidget):
         # 6. Show/hide the whole footer.
         #    Spec §3.2: hidden when total_pages <= 1; in "All" mode hide the
         #    page bar but still show the status label.
-        self.page_bar_container.setVisible(self._page_size != 0 and total_pages > 1)
-        self.pagination_footer.setVisible(total_pages > 1 or self._page_size == 0)
+        self.page_bar_container.setVisible(self._page_size != self._PAGE_SIZE_ALL and total_pages > 1)
+        self.pagination_footer.setVisible(total_pages > 1 or self._page_size == self._PAGE_SIZE_ALL)
 
     def _rebuild_page_bar(self, current: int, total: int):
         """Rebuild numbered page buttons + Prev/Next (spec §6.2)."""
@@ -773,9 +774,15 @@ class ProxiesWidget(QWidget):
         next_btn.clicked.connect(lambda: self._goto_page(current + 1))
         self.page_bar_layout.addWidget(next_btn)
 
+    def _total_pages(self) -> int:
+        """Compute total pages from current filter result + page size."""
+        if self._page_size == self._PAGE_SIZE_ALL:
+            return 1
+        return max(1, (len(self._visible_filtered) + self._page_size - 1) // self._page_size)
+
     def _goto_page(self, page: int):
         """Page-bar button handler. Re-renders without re-filtering."""
-        self._current_page = page
+        self._current_page = max(1, min(page, self._total_pages()))
         self._render_current_page()
 
     def on_proxy_clicked(self, proxy_name: str):
