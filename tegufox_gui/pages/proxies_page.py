@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
     QRadioButton,
     QButtonGroup,
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSettings
 import random
 
 from tegufox_gui.utils.styles import DarkPalette
@@ -249,8 +249,12 @@ class ProxyCard(QFrame):
 
 class ProxiesWidget(QWidget):
     """Proxy management page"""
-    
+
     _SORT_OPTIONS = ["Name A→Z", "Name Z→A", "Date newest", "Date oldest"]
+    _PAGE_SIZE_OPTIONS = [50, 100, 200, 0]  # 0 sentinel = "All"
+    _PAGE_SIZE_LABELS = ["50", "100", "200", "All"]
+    _DEFAULT_PAGE_SIZE = 100
+    _SORT_NEWEST_INDEX = 2  # matches "Date newest" in _SORT_OPTIONS
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -259,6 +263,16 @@ class ProxiesWidget(QWidget):
         self.profile_manager = ProfileManager()
         self._selected_proxies = set()
         self._active_tests = {}  # proxy_name -> ProxyTestWorker
+
+        # Pagination state (spec §4)
+        settings = QSettings("Tegufox", "GUI")
+        raw_size = settings.value("proxies/page_size", self._DEFAULT_PAGE_SIZE, type=int)
+        self._page_size = (
+            raw_size if raw_size in self._PAGE_SIZE_OPTIONS else self._DEFAULT_PAGE_SIZE
+        )
+        self._current_page = 1
+        self._visible_filtered: list = []
+
         self._setup_ui()
         self.load_proxies()
     
