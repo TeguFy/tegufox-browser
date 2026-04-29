@@ -23,6 +23,7 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSettings
 import random
 
 from tegufox_gui.utils.styles import DarkPalette
+from tegufox_gui.utils.pagination import compute_page_window
 from tegufox_core.proxy_manager import ProxyManager, pool_to_profile_snapshot
 from tegufox_core.profile_manager import ProfileManager
 
@@ -654,12 +655,12 @@ class ProxiesWidget(QWidget):
         self._apply_filter()
 
     def _apply_filter(self):
-        """Apply search and sort filters"""
+        """Recompute visible+sorted list, clamp current page, render (spec §5)."""
         text = self.search_input.text() if hasattr(self, "search_input") else ""
         sort_idx = self.sort_combo.currentIndex() if hasattr(self, "sort_combo") else 0
-        
+
         visible = [c for c in self._all_cards if c.matches(text)]
-        
+
         if sort_idx == 0:
             visible.sort(key=lambda c: c._name.lower())
         elif sort_idx == 1:
@@ -668,15 +669,115 @@ class ProxiesWidget(QWidget):
             visible.sort(key=lambda c: c.proxy_data.get("created", ""), reverse=True)
         elif sort_idx == 3:
             visible.sort(key=lambda c: c.proxy_data.get("created", ""))
-        
+
+        self._visible_filtered = visible
+
+        if self._page_size == 0:
+            total_pages = 1
+        else:
+            total_pages = max(1, (len(visible) + self._page_size - 1) // self._page_size)
+        self._current_page = max(1, min(self._current_page, total_pages))
+
+        self._render_current_page()
+
+    def _render_current_page(self):
+        """Detach all, attach the current-page slice, refresh footer (spec §5)."""
+        # 1. Detach every card currently in layout (no deleteLater — reused).
         while self._list_layout.count():
-            self._list_layout.takeAt(0)
+            item = self._list_layout.takeAt(0)
+            w = item.widget() if item else None
+            if w is not None:
+                w.setParent(None)
+
+        # 2. Hide every known card up-front (covers cards that weren't in
+        #    the layout this round).
         for card in self._all_cards:
             card.setVisible(False)
-        for card in visible:
-            card.setVisible(True)
+
+        # 3. Compute the slice for the current page.
+        if self._page_size == 0:
+            slice_cards = self._visible_filtered
+            total_pages = 1
+        else:
+            start = (self._current_page - 1) * self._page_size
+            end = start + self._page_size
+            slice_cards = self._visible_filtered[start:end]
+            total_pages = max(1, (len(self._visible_filtered) + self._page_size - 1) // self._page_size)
+
+        # 4. Attach + show the slice.
+        for card in slice_cards:
+            card.setParent(self._list_widget)
             self._list_layout.addWidget(card)
-    
+            card.setVisible(True)
+
+        # 5. Refresh footer.
+        self._rebuild_page_bar(self._current_page, total_pages)
+
+        total = len(self._visible_filtered)
+        if total == 0:
+            self.page_status_lbl.setText("showing 0-0 of 0")
+        elif self._page_size == 0:
+            self.page_status_lbl.setText(f"showing 1-{total} of {total}")
+        else:
+            shown_start = (self._current_page - 1) * self._page_size + 1
+            shown_end = shown_start + len(slice_cards) - 1
+            self.page_status_lbl.setText(f"showing {shown_start}-{shown_end} of {total}")
+
+        # 6. Show/hide the whole footer.
+        #    Spec §3.2: hidden when total_pages <= 1; in "All" mode hide the
+        #    page bar but still show the status label.
+        self.page_bar_container.setVisible(self._page_size != 0 and total_pages > 1)
+        self.pagination_footer.setVisible(total_pages > 1 or self._page_size == 0)
+
+    def _rebuild_page_bar(self, current: int, total: int):
+        """Rebuild numbered page buttons + Prev/Next (spec §6.2)."""
+        # Destroy old buttons (cheap — at most ~9 widgets).
+        while self.page_bar_layout.count():
+            item = self.page_bar_layout.takeAt(0)
+            w = item.widget() if item else None
+            if w is not None:
+                w.setParent(None)
+                w.deleteLater()
+
+        if total <= 1:
+            return
+
+        prev_btn = QPushButton("<")
+        prev_btn.setFixedSize(28, 28)
+        prev_btn.setEnabled(current > 1)
+        prev_btn.clicked.connect(lambda: self._goto_page(current - 1))
+        self.page_bar_layout.addWidget(prev_btn)
+
+        for token in compute_page_window(current, total):
+            if token is None:
+                lbl = QLabel("…")
+                lbl.setStyleSheet(f"color: {DarkPalette.TEXT_DIM}; padding: 0 4px;")
+                self.page_bar_layout.addWidget(lbl)
+                continue
+            btn = QPushButton(str(token))
+            btn.setFixedSize(28, 28)
+            if token == current:
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: {DarkPalette.ACCENT}; color: white;
+                        border: none; border-radius: 4px; font-weight: 600;
+                    }}
+                """)
+            page = token
+            btn.clicked.connect(lambda _=False, p=page: self._goto_page(p))
+            self.page_bar_layout.addWidget(btn)
+
+        next_btn = QPushButton(">")
+        next_btn.setFixedSize(28, 28)
+        next_btn.setEnabled(current < total)
+        next_btn.clicked.connect(lambda: self._goto_page(current + 1))
+        self.page_bar_layout.addWidget(next_btn)
+
+    def _goto_page(self, page: int):
+        """Page-bar button handler. Re-renders without re-filtering."""
+        self._current_page = page
+        self._render_current_page()
+
     def on_proxy_clicked(self, proxy_name: str):
         """Handle proxy card click - show details"""
         data = self.proxy_manager.load(proxy_name)
