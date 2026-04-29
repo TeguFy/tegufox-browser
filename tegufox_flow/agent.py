@@ -319,3 +319,170 @@ def _decide(
     raise ParseError(
         f"LLM produced malformed output {_MAX_PARSE_ATTEMPTS} times: {last_error}"
     )
+
+
+# ---------------------------------------------------------------------------
+# 4. AgentRunner — main loop
+# ---------------------------------------------------------------------------
+
+import logging
+import threading
+import time
+import uuid
+
+# Import as module-level so tests can monkeypatch.
+from tegufox_automation import TegufoxSession            # type: ignore  # noqa: F401
+
+
+_LOG = logging.getLogger("tegufox_flow.agent")
+
+
+class _MutableCtx:
+    """Lightweight stand-in for FlowContext used inside dispatch_action.
+    Exposes .page, .vars, .render, .logger, .set_var — the subset the
+    existing step handlers reach for. We don't need the full FlowContext
+    (with ExpressionEngine, kv, checkpoints) because the agent doesn't
+    use Jinja templates or persistent state — values come straight from
+    AgentAction.args."""
+
+    def __init__(self, page, logger):
+        self.page = page
+        self.vars: Dict[str, Any] = {}
+        self.logger = logger
+        self._human_mouse = None
+        self._human_keyboard = None
+
+    def render(self, s: Any) -> Any:
+        return s if not isinstance(s, str) else s
+
+    def set_var(self, name: str, value: Any) -> None:
+        self.vars[name] = value
+
+    def eval(self, expr: str) -> Any:
+        return expr
+
+
+class AgentRunner:
+    """observe → decide → dispatch loop.
+
+    Construct with goal + profile + limits; call .run() to drive the
+    session to completion. Optional `on_step(idx, action, result)`
+    callback gets each step for live UI tracing. `stop_event` is a
+    threading.Event the GUI Stop button sets; the runner checks it at
+    the top of every iteration.
+    """
+
+    def __init__(
+        self,
+        *,
+        goal: str,
+        profile_name: str,
+        proxy_name: Optional[str] = None,
+        max_steps: int = 30,
+        max_time: int = 300,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+        stop_event: Optional[threading.Event] = None,
+        on_step=None,
+        on_ask_user=None,
+    ):
+        self.goal = goal
+        self.profile_name = profile_name
+        self.proxy_name = proxy_name
+        self.max_steps = int(max_steps)
+        self.max_time = float(max_time)
+        self.provider = provider
+        self.model = model
+        self._stop = stop_event or threading.Event()
+        self._on_step = on_step
+        self._on_ask_user = on_ask_user
+        self.run_id = str(uuid.uuid4())
+
+    def run(self) -> AgentResult:
+        history: List[Dict[str, Any]] = []
+        started = time.monotonic()
+
+        try:
+            with TegufoxSession(profile=self.profile_name) as session:
+                ctx = _MutableCtx(page=session.page, logger=_LOG)
+                step_i = 0
+
+                while step_i < self.max_steps:
+                    if self._stop.is_set():
+                        return AgentResult(
+                            run_id=self.run_id, status="aborted",
+                            reason="user stop", steps=step_i, history=history,
+                        )
+                    if (time.monotonic() - started) > self.max_time:
+                        return AgentResult(
+                            run_id=self.run_id, status="timeout",
+                            reason=f"exceeded {self.max_time}s",
+                            steps=step_i, history=history,
+                        )
+
+                    obs = _observe(session.page)
+                    try:
+                        action = _decide(
+                            history=history, obs=obs, goal=self.goal,
+                            provider=self.provider, model=self.model,
+                        )
+                    except ParseError as e:
+                        return AgentResult(
+                            run_id=self.run_id, status="parse_error",
+                            reason=str(e), steps=step_i, history=history,
+                        )
+
+                    if self._on_step is not None:
+                        try:
+                            self._on_step(step_i + 1, action, None)
+                        except Exception:
+                            pass
+
+                    if action.verb == "done":
+                        return AgentResult(
+                            run_id=self.run_id, status="done",
+                            reason=action.args.get("reason", ""),
+                            steps=step_i, history=history,
+                        )
+                    if action.verb == "ask_user":
+                        question = action.args.get("question", "")
+                        reply = ""
+                        if self._on_ask_user is not None:
+                            try:
+                                reply = self._on_ask_user(question)
+                            except Exception:
+                                reply = ""
+                        if not reply:
+                            return AgentResult(
+                                run_id=self.run_id, status="aborted",
+                                reason=f"ask_user cancelled: {question}",
+                                steps=step_i, history=history,
+                            )
+                        history.append({
+                            "obs": obs, "action": action.__dict__,
+                            "result": {"user_reply": reply},
+                        })
+                        step_i += 1
+                        continue
+
+                    try:
+                        result = dispatch_action(action, ctx)
+                    except Exception as e:
+                        result = {"error": f"{type(e).__name__}: {e}"}
+                    history.append({
+                        "obs": obs, "action": action.__dict__, "result": result,
+                    })
+                    step_i += 1
+
+                return AgentResult(
+                    run_id=self.run_id, status="max_steps",
+                    reason=f"hit max_steps={self.max_steps}",
+                    steps=step_i, history=history,
+                )
+        except Exception as e:
+            _LOG.exception("agent runner crashed")
+            return AgentResult(
+                run_id=self.run_id, status="error",
+                reason=f"{type(e).__name__}: {e}",
+                steps=len(history), history=history,
+            )
