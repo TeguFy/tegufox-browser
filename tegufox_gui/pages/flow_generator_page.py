@@ -213,13 +213,7 @@ class FlowGeneratorPage(QWidget):
         opts = QHBoxLayout()
         opts.addWidget(QLabel("Provider:"))
         self.provider_combo = QComboBox()
-        self.provider_combo.addItem("(auto)", "")
-        try:
-            from tegufox_flow.steps.ai_providers import list_configured_providers
-            for p in list_configured_providers():
-                self.provider_combo.addItem(p, p)
-        except Exception:
-            pass
+        self._refresh_providers()
         opts.addWidget(self.provider_combo)
         opts.addWidget(QLabel("Model:"))
         self.model_edit = QLineEdit()
@@ -261,13 +255,40 @@ class FlowGeneratorPage(QWidget):
         layout.addWidget(self.status_label)
 
     # ------------------------------------------------------------------
+    def showEvent(self, event):
+        # Re-read configured providers each time the page is shown so a
+        # fresh-saved key in Settings → AI Providers is picked up without
+        # restarting the GUI.
+        self._refresh_providers()
+        super().showEvent(event)
+
+    def _refresh_providers(self) -> None:
+        try:
+            from tegufox_flow.steps.ai_providers import list_configured_providers
+            configured = list_configured_providers()
+        except Exception:
+            configured = []
+        previous = self.provider_combo.currentData() if self.provider_combo.count() else ""
+        self.provider_combo.blockSignals(True)
+        self.provider_combo.clear()
+        self.provider_combo.addItem("(auto)", "")
+        for p in configured:
+            self.provider_combo.addItem(p, p)
+        if not configured:
+            self.provider_combo.addItem("⚠ none configured — Settings → AI", "")
+        # Restore previous choice if still available.
+        if previous:
+            idx = self.provider_combo.findData(previous)
+            if idx >= 0:
+                self.provider_combo.setCurrentIndex(idx)
+        self.provider_combo.blockSignals(False)
+
     def _on_generate(self) -> None:
         goal = self.goal_edit.toPlainText().strip()
         if not goal:
             self.status_label.setText("Type a goal first.")
             return
-        provider_text = self.provider_combo.currentText()
-        provider = "" if provider_text == "(auto)" else provider_text
+        provider = self.provider_combo.currentData() or ""
         model = self.model_edit.text().strip()
         self.generate_btn.setEnabled(False)
         self.status_label.setText("Generating… (may take 5-30s)")

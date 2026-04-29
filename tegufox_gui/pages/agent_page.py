@@ -125,15 +125,7 @@ class AgentPage(QWidget):
         opt.addRow("", self.record_chk)
 
         self.provider_combo = QComboBox()
-        self.provider_combo.addItem("(auto)", "")
-        try:
-            from tegufox_flow.steps.ai_providers import list_configured_providers
-            for p in list_configured_providers():
-                self.provider_combo.addItem(p, p)
-        except Exception:
-            pass
-        if self.provider_combo.count() == 1:
-            self.provider_combo.addItem("⚠ none configured — Settings → AI", "")
+        self._refresh_providers()
         opt.addRow("Provider", self.provider_combo)
 
         self.model_edit = QLineEdit()
@@ -163,6 +155,32 @@ class AgentPage(QWidget):
         self.status_label = QLabel("")
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
+
+    def showEvent(self, event):
+        # Re-read configured providers when the page is shown so newly
+        # saved Settings → AI keys are reflected without restarting.
+        self._refresh_providers()
+        super().showEvent(event)
+
+    def _refresh_providers(self) -> None:
+        try:
+            from tegufox_flow.steps.ai_providers import list_configured_providers
+            configured = list_configured_providers()
+        except Exception:
+            configured = []
+        previous = self.provider_combo.currentData() if self.provider_combo.count() else ""
+        self.provider_combo.blockSignals(True)
+        self.provider_combo.clear()
+        self.provider_combo.addItem("(auto)", "")
+        for p in configured:
+            self.provider_combo.addItem(p, p)
+        if not configured:
+            self.provider_combo.addItem("⚠ none configured — Settings → AI", "")
+        if previous:
+            idx = self.provider_combo.findData(previous)
+            if idx >= 0:
+                self.provider_combo.setCurrentIndex(idx)
+        self.provider_combo.blockSignals(False)
 
     def _populate_combos(self) -> None:
         try:
