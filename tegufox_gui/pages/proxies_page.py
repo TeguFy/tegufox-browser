@@ -308,7 +308,28 @@ class ProxiesWidget(QWidget):
         """)
         self.sort_combo.currentIndexChanged.connect(self._apply_filter)
         hdr.addWidget(self.sort_combo)
-        
+
+        # Page-size dropdown (spec §3.1)
+        self.page_size_combo = QComboBox()
+        self.page_size_combo.addItems(self._PAGE_SIZE_LABELS)
+        self.page_size_combo.setCurrentIndex(self._PAGE_SIZE_OPTIONS.index(self._page_size))
+        self.page_size_combo.setFixedHeight(32)
+        self.page_size_combo.setStyleSheet(f"""
+            QComboBox {{
+                background-color: {DarkPalette.CARD}; color: {DarkPalette.TEXT};
+                border: 1px solid {DarkPalette.BORDER}; border-radius: 4px;
+                padding: 4px 10px; min-width: 70px; font-size: 12px;
+            }}
+            QComboBox::drop-down {{ border: none; }}
+            QComboBox QAbstractItemView {{
+                background-color: {DarkPalette.CARD}; color: {DarkPalette.TEXT};
+                selection-background-color: {DarkPalette.ACCENT};
+            }}
+        """)
+        self.page_size_combo.currentIndexChanged.connect(self._on_page_size_changed)
+        hdr.addWidget(QLabel("Show:"))
+        hdr.addWidget(self.page_size_combo)
+
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search...")
         self.search_input.setFixedHeight(32)
@@ -595,7 +616,16 @@ class ProxiesWidget(QWidget):
     def _update_title(self, count: int):
         """Update title with count"""
         self.title_lbl.setText(f"Proxies ({count})")
-    
+
+    def _on_page_size_changed(self, index: int):
+        """Page-size dropdown changed. Persist + reset to page 1 + re-render."""
+        if index < 0 or index >= len(self._PAGE_SIZE_OPTIONS):
+            return
+        self._page_size = self._PAGE_SIZE_OPTIONS[index]
+        QSettings("Tegufox", "GUI").setValue("proxies/page_size", self._page_size)
+        self._current_page = 1
+        self._apply_filter()
+
     def _apply_filter(self):
         """Apply search and sort filters"""
         text = self.search_input.text() if hasattr(self, "search_input") else ""
