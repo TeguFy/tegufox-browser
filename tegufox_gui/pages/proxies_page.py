@@ -468,7 +468,14 @@ class ProxiesWidget(QWidget):
     def load_proxies(self):
         """Load all proxies from database"""
         while self._list_layout.count():
-            self._list_layout.takeAt(0)
+            item = self._list_layout.takeAt(0)
+            w = item.widget() if item else None
+            if w is not None:
+                w.setParent(None)
+                w.deleteLater()
+        for card in self._all_cards:
+            card.setParent(None)
+            card.deleteLater()
         self._all_cards.clear()
         
         try:
@@ -661,7 +668,18 @@ Notes: {data.get('notes', '—')}"""
         
         try:
             self.proxy_manager.delete(proxy_name)
-            self._all_cards = [c for c in self._all_cards if c._name != proxy_name]
+            self._selected_proxies.discard(proxy_name)
+            remaining = []
+            for c in self._all_cards:
+                if c._name == proxy_name:
+                    c.setParent(None)
+                    c.deleteLater()
+                else:
+                    remaining.append(c)
+            self._all_cards = remaining
+            has_selection = len(self._selected_proxies) > 0
+            self.delete_selected_btn.setEnabled(has_selection)
+            self.test_selected_btn.setEnabled(has_selection)
             self._update_title(len(self._all_cards))
             self._apply_filter()
         except Exception as exc:
