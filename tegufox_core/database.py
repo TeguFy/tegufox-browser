@@ -49,6 +49,8 @@ def ensure_schema(engine) -> None:
 
     Safe to call multiple times. Currently handles:
       - flow_runs.batch_id (added by sub-project #2)
+      - flow_runs.kind (added by sub-project #7)
+      - flow_runs.goal_text (added by sub-project #7)
     """
     from sqlalchemy import inspect
 
@@ -65,6 +67,21 @@ def ensure_schema(engine) -> None:
                 conn.execute(text(
                     "CREATE INDEX IF NOT EXISTS ix_flow_runs_batch_id "
                     "ON flow_runs(batch_id)"
+                ))
+        if "kind" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE flow_runs ADD COLUMN kind VARCHAR(16) "
+                    "NOT NULL DEFAULT 'flow'"
+                ))
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_flow_runs_kind "
+                    "ON flow_runs(kind)"
+                ))
+        if "goal_text" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE flow_runs ADD COLUMN goal_text TEXT"
                 ))
 
 
@@ -439,6 +456,8 @@ class FlowRun(Base):
     last_step_id = Column(String(255))
     error_text = Column(Text)
     batch_id = Column(String(64), ForeignKey("flow_batches.batch_id"), nullable=True, index=True)
+    kind = Column(String(16), nullable=False, default="flow", index=True)
+    goal_text = Column(Text)
 
 
 class FlowCheckpoint(Base):
