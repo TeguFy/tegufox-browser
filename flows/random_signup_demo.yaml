@@ -1,0 +1,96 @@
+schema_version: 1
+name: random_signup_demo
+description: |
+  End-to-end demo of the new random / record / cookie features.
+
+    1. Generate random identity (email + phone + name + password) via
+       Faker-backed Jinja helpers.
+    2. Append the identity to data/registrations.csv (one row per run)
+       so you have a permanent record of every account this flow created.
+    3. (Mock) navigate somewhere, fill a form with the identity, submit.
+       Replace the URL/selectors below with your real signup target.
+    4. Save cookies to data/cookies/<username>.json so a later flow can
+       browser.load_cookies and skip auth.
+
+inputs:
+  domain:
+    type: string
+    default: "hejito.com"
+  out_dir:
+    type: string
+    default: "data/runs/random-demo"
+  registrations_csv:
+    type: string
+    default: "data/registrations.csv"
+  cookie_dir:
+    type: string
+    default: "data/cookies"
+
+defaults:
+  on_error:
+    action: abort
+
+steps:
+  - id: gen_email
+    type: control.set
+    var: email
+    value: "random_email(inputs.domain)"
+
+  - id: gen_phone
+    type: control.set
+    var: phone
+    value: "random_phone('vn')"
+
+  - id: gen_name
+    type: control.set
+    var: full_name
+    value: "random_name('vi_VN')"
+
+  - id: gen_username
+    type: control.set
+    var: username
+    value: "random_username()"
+
+  - id: gen_password
+    type: control.set
+    var: password
+    value: "random_password(14)"
+
+  - id: log_identity
+    type: io.log
+    level: info
+    message: "Generated → {{ vars.full_name }} | {{ vars.email }} | {{ vars.phone }}"
+
+  - id: record_to_csv
+    type: io.record
+    path: "{{ inputs.registrations_csv }}"
+    format: csv
+    data:
+      timestamp: "{{ now() }}"
+      full_name: "{{ vars.full_name }}"
+      email: "{{ vars.email }}"
+      phone: "{{ vars.phone }}"
+      username: "{{ vars.username }}"
+      password: "{{ vars.password }}"
+
+  - id: open_target
+    type: browser.goto
+    url: "https://example.com"
+    wait_until: load
+    timeout_ms: 20000
+
+  - id: snap_loaded
+    type: browser.screenshot
+    path: "{{ inputs.out_dir }}/01-loaded.png"
+    full_page: true
+    on_error: { action: skip }
+
+  - id: save_cookies
+    type: browser.save_cookies
+    path: "{{ inputs.cookie_dir }}/{{ vars.username }}.json"
+    on_error: { action: skip }
+
+  - id: log_done
+    type: io.log
+    level: info
+    message: "Done. CSV: {{ inputs.registrations_csv }}, cookies: {{ inputs.cookie_dir }}/{{ vars.username }}.json"

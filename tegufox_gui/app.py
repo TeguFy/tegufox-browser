@@ -34,6 +34,7 @@ from tegufox_gui.pages import (
     SettingsWidget,
     ProxiesWidget,
 )
+from tegufox_gui.pages.flows_page import FlowsPage
 
 
 class TegufoxProfileManager(QMainWindow):
@@ -83,6 +84,36 @@ class TegufoxProfileManager(QMainWindow):
 
         self.settings_page = SettingsWidget()
         self.content_stack.addWidget(self.settings_page)
+
+        self.flows_page = FlowsPage()
+        self.content_stack.addWidget(self.flows_page)
+
+        from tegufox_gui.pages.runs_page import RunsPage
+        self.runs_page = RunsPage()
+        self.content_stack.addWidget(self.runs_page)
+
+        from tegufox_gui.pages.schedules_page import SchedulesPage
+        self.schedules_page = SchedulesPage()
+        self.content_stack.addWidget(self.schedules_page)
+
+        from tegufox_gui.pages.flow_generator_page import FlowGeneratorPage
+        self.flow_gen_page = FlowGeneratorPage()
+        self.content_stack.addWidget(self.flow_gen_page)
+
+        from tegufox_gui.pages.agent_page import AgentPage
+        self.agent_page = AgentPage()
+        self.content_stack.addWidget(self.agent_page)
+
+        # Background scheduler daemon — polls flow_schedules every 30s.
+        try:
+            from tegufox_flow.scheduler import SchedulerDaemon
+            self.scheduler = SchedulerDaemon(db_path="data/tegufox.db")
+            self.scheduler.start()
+        except Exception as e:
+            import logging
+            logging.getLogger("tegufox_gui").warning(
+                f"scheduler failed to start: {e}"
+            )
 
     def create_sidebar(self):
         """Create compact sidebar with navigation"""
@@ -138,6 +169,31 @@ class TegufoxProfileManager(QMainWindow):
         sessions_btn.clicked.connect(lambda: self.switch_page(1))
         layout.addWidget(sessions_btn)
         self.nav_buttons.append(sessions_btn)
+
+        flows_btn = SidebarButton("Flows", "▶")
+        flows_btn.clicked.connect(lambda: self.switch_page(6))
+        layout.addWidget(flows_btn)
+        self.nav_buttons.append(flows_btn)
+
+        runs_btn = SidebarButton("Runs", "📊")
+        runs_btn.clicked.connect(lambda: self.switch_page(7))
+        layout.addWidget(runs_btn)
+        self.nav_buttons.append(runs_btn)
+
+        schedules_btn = SidebarButton("Schedules", "⏰")
+        schedules_btn.clicked.connect(lambda: self.switch_page(8))
+        layout.addWidget(schedules_btn)
+        self.nav_buttons.append(schedules_btn)
+
+        flow_gen_btn = SidebarButton("AI Flow Gen", "🤖")
+        flow_gen_btn.clicked.connect(lambda: self.switch_page(9))
+        layout.addWidget(flow_gen_btn)
+        self.nav_buttons.append(flow_gen_btn)
+
+        agent_btn = SidebarButton("Agent", "🦾")
+        agent_btn.clicked.connect(lambda: self.switch_page(10))
+        layout.addWidget(agent_btn)
+        self.nav_buttons.append(agent_btn)
 
         proxies_btn = SidebarButton("Proxies", "🔌")
         proxies_btn.clicked.connect(lambda: self.switch_page(4))

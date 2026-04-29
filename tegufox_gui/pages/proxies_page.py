@@ -19,10 +19,11 @@ from PyQt6.QtWidgets import (
     QRadioButton,
     QButtonGroup,
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSettings
 import random
 
 from tegufox_gui.utils.styles import DarkPalette
+from tegufox_gui.utils.pagination import compute_page_window
 from tegufox_core.proxy_manager import ProxyManager, pool_to_profile_snapshot
 from tegufox_core.profile_manager import ProfileManager
 
@@ -249,8 +250,13 @@ class ProxyCard(QFrame):
 
 class ProxiesWidget(QWidget):
     """Proxy management page"""
-    
+
     _SORT_OPTIONS = ["Name A→Z", "Name Z→A", "Date newest", "Date oldest"]
+    _PAGE_SIZE_ALL = 0  # sentinel for "All" mode
+    _PAGE_SIZE_OPTIONS = [50, 100, 200, _PAGE_SIZE_ALL]
+    _PAGE_SIZE_LABELS = ["50", "100", "200", "All"]
+    _DEFAULT_PAGE_SIZE = 100
+    _SORT_NEWEST_INDEX = 2  # matches "Date newest" in _SORT_OPTIONS
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -259,6 +265,16 @@ class ProxiesWidget(QWidget):
         self.profile_manager = ProfileManager()
         self._selected_proxies = set()
         self._active_tests = {}  # proxy_name -> ProxyTestWorker
+
+        # Pagination state (spec §4)
+        settings = QSettings("Tegufox", "GUI")
+        raw_size = settings.value("proxies/page_size", self._DEFAULT_PAGE_SIZE, type=int)
+        self._page_size = (
+            raw_size if raw_size in self._PAGE_SIZE_OPTIONS else self._DEFAULT_PAGE_SIZE
+        )
+        self._current_page = 1
+        self._visible_filtered: list = []
+
         self._setup_ui()
         self.load_proxies()
     
@@ -292,9 +308,30 @@ class ProxiesWidget(QWidget):
                 selection-background-color: {DarkPalette.ACCENT};
             }}
         """)
-        self.sort_combo.currentIndexChanged.connect(self._apply_filter)
+        self.sort_combo.currentIndexChanged.connect(self._on_filter_changed)
         hdr.addWidget(self.sort_combo)
-        
+
+        # Page-size dropdown (spec §3.1)
+        self.page_size_combo = QComboBox()
+        self.page_size_combo.addItems(self._PAGE_SIZE_LABELS)
+        self.page_size_combo.setCurrentIndex(self._PAGE_SIZE_OPTIONS.index(self._page_size))
+        self.page_size_combo.setFixedHeight(32)
+        self.page_size_combo.setStyleSheet(f"""
+            QComboBox {{
+                background-color: {DarkPalette.CARD}; color: {DarkPalette.TEXT};
+                border: 1px solid {DarkPalette.BORDER}; border-radius: 4px;
+                padding: 4px 10px; min-width: 70px; font-size: 12px;
+            }}
+            QComboBox::drop-down {{ border: none; }}
+            QComboBox QAbstractItemView {{
+                background-color: {DarkPalette.CARD}; color: {DarkPalette.TEXT};
+                selection-background-color: {DarkPalette.ACCENT};
+            }}
+        """)
+        self.page_size_combo.currentIndexChanged.connect(self._on_page_size_changed)
+        hdr.addWidget(QLabel("Show:"))
+        hdr.addWidget(self.page_size_combo)
+
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search...")
         self.search_input.setFixedHeight(32)
@@ -306,7 +343,7 @@ class ProxiesWidget(QWidget):
             }}
             QLineEdit:focus {{ border-color: {DarkPalette.ACCENT}; }}
         """)
-        self.search_input.textChanged.connect(self._apply_filter)
+        self.search_input.textChanged.connect(self._on_filter_changed)
         hdr.addWidget(self.search_input)
         
         hdr.addStretch()
@@ -464,11 +501,45 @@ class ProxiesWidget(QWidget):
         self._list_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         scroll.setWidget(self._list_widget)
         layout.addWidget(scroll)
+
+        # Pagination footer (spec §3.2). Hidden until first render decides
+        # whether it's needed.
+        self.pagination_footer = QWidget()
+        self.pagination_footer.setStyleSheet(
+            f"background-color: {DarkPalette.BACKGROUND};"
+        )
+        footer_row = QHBoxLayout(self.pagination_footer)
+        footer_row.setContentsMargins(0, 6, 0, 0)
+        footer_row.setSpacing(6)
+
+        self.page_bar_container = QWidget()
+        self.page_bar_layout = QHBoxLayout(self.page_bar_container)
+        self.page_bar_layout.setContentsMargins(0, 0, 0, 0)
+        self.page_bar_layout.setSpacing(4)
+        footer_row.addWidget(self.page_bar_container)
+
+        footer_row.addStretch()
+
+        self.page_status_lbl = QLabel("")
+        self.page_status_lbl.setStyleSheet(
+            f"color: {DarkPalette.TEXT_DIM}; font-size: 11px;"
+        )
+        footer_row.addWidget(self.page_status_lbl)
+
+        self.pagination_footer.setVisible(False)
+        layout.addWidget(self.pagination_footer)
     
     def load_proxies(self):
         """Load all proxies from database"""
         while self._list_layout.count():
-            self._list_layout.takeAt(0)
+            item = self._list_layout.takeAt(0)
+            w = item.widget() if item else None
+            if w is not None:
+                w.setParent(None)
+                w.deleteLater()
+        for card in self._all_cards:
+            card.setParent(None)
+            card.deleteLater()
         self._all_cards.clear()
         
         try:
@@ -574,14 +645,28 @@ class ProxiesWidget(QWidget):
     def _update_title(self, count: int):
         """Update title with count"""
         self.title_lbl.setText(f"Proxies ({count})")
-    
+
+    def _on_page_size_changed(self, index: int):
+        """Page-size dropdown changed. Persist + reset to page 1 + re-render."""
+        if index < 0 or index >= len(self._PAGE_SIZE_OPTIONS):
+            return
+        self._page_size = self._PAGE_SIZE_OPTIONS[index]
+        QSettings("Tegufox", "GUI").setValue("proxies/page_size", self._page_size)
+        self._current_page = 1
+        self._apply_filter()
+
+    def _on_filter_changed(self, *_):
+        """Search or sort changed — reset to page 1, re-render (spec §6.1)."""
+        self._current_page = 1
+        self._apply_filter()
+
     def _apply_filter(self):
-        """Apply search and sort filters"""
+        """Recompute visible+sorted list, clamp current page, render (spec §5)."""
         text = self.search_input.text() if hasattr(self, "search_input") else ""
         sort_idx = self.sort_combo.currentIndex() if hasattr(self, "sort_combo") else 0
-        
+
         visible = [c for c in self._all_cards if c.matches(text)]
-        
+
         if sort_idx == 0:
             visible.sort(key=lambda c: c._name.lower())
         elif sort_idx == 1:
@@ -590,15 +675,121 @@ class ProxiesWidget(QWidget):
             visible.sort(key=lambda c: c.proxy_data.get("created", ""), reverse=True)
         elif sort_idx == 3:
             visible.sort(key=lambda c: c.proxy_data.get("created", ""))
-        
+
+        self._visible_filtered = visible
+
+        if self._page_size == self._PAGE_SIZE_ALL:
+            total_pages = 1
+        else:
+            total_pages = max(1, (len(visible) + self._page_size - 1) // self._page_size)
+        self._current_page = max(1, min(self._current_page, total_pages))
+
+        self._render_current_page()
+
+    def _render_current_page(self):
+        """Detach all, attach the current-page slice, refresh footer (spec §5)."""
+        # 1. Detach every card currently in layout (no deleteLater — reused).
         while self._list_layout.count():
-            self._list_layout.takeAt(0)
+            item = self._list_layout.takeAt(0)
+            w = item.widget() if item else None
+            if w is not None:
+                w.setParent(None)
+
+        # 2. Hide every known card up-front (covers cards that weren't in
+        #    the layout this round).
         for card in self._all_cards:
             card.setVisible(False)
-        for card in visible:
-            card.setVisible(True)
+
+        # 3. Compute the slice for the current page.
+        if self._page_size == self._PAGE_SIZE_ALL:
+            slice_cards = self._visible_filtered
+            total_pages = 1
+        else:
+            start = (self._current_page - 1) * self._page_size
+            end = start + self._page_size
+            slice_cards = self._visible_filtered[start:end]
+            total_pages = max(1, (len(self._visible_filtered) + self._page_size - 1) // self._page_size)
+
+        # 4. Attach + show the slice.
+        for card in slice_cards:
+            card.setParent(self._list_widget)
             self._list_layout.addWidget(card)
-    
+            card.setVisible(True)
+
+        # 5. Refresh footer.
+        self._rebuild_page_bar(self._current_page, total_pages)
+
+        total = len(self._visible_filtered)
+        if total == 0:
+            self.page_status_lbl.setText("showing 0-0 of 0")
+        elif self._page_size == self._PAGE_SIZE_ALL:
+            self.page_status_lbl.setText(f"showing 1-{total} of {total}")
+        else:
+            shown_start = (self._current_page - 1) * self._page_size + 1
+            shown_end = shown_start + len(slice_cards) - 1
+            self.page_status_lbl.setText(f"showing {shown_start}-{shown_end} of {total}")
+
+        # 6. Show/hide the whole footer.
+        #    Spec §3.2: hidden when total_pages <= 1; in "All" mode hide the
+        #    page bar but still show the status label.
+        self.page_bar_container.setVisible(self._page_size != self._PAGE_SIZE_ALL and total_pages > 1)
+        self.pagination_footer.setVisible(total_pages > 1 or self._page_size == self._PAGE_SIZE_ALL)
+
+    def _rebuild_page_bar(self, current: int, total: int):
+        """Rebuild numbered page buttons + Prev/Next (spec §6.2)."""
+        # Destroy old buttons (cheap — at most ~9 widgets).
+        while self.page_bar_layout.count():
+            item = self.page_bar_layout.takeAt(0)
+            w = item.widget() if item else None
+            if w is not None:
+                w.setParent(None)
+                w.deleteLater()
+
+        if total <= 1:
+            return
+
+        prev_btn = QPushButton("<")
+        prev_btn.setFixedSize(28, 28)
+        prev_btn.setEnabled(current > 1)
+        prev_btn.clicked.connect(lambda: self._goto_page(current - 1))
+        self.page_bar_layout.addWidget(prev_btn)
+
+        for token in compute_page_window(current, total):
+            if token is None:
+                lbl = QLabel("…")
+                lbl.setStyleSheet(f"color: {DarkPalette.TEXT_DIM}; padding: 0 4px;")
+                self.page_bar_layout.addWidget(lbl)
+                continue
+            btn = QPushButton(str(token))
+            btn.setFixedSize(28, 28)
+            if token == current:
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: {DarkPalette.ACCENT}; color: white;
+                        border: none; border-radius: 4px; font-weight: 600;
+                    }}
+                """)
+            page = token
+            btn.clicked.connect(lambda _=False, p=page: self._goto_page(p))
+            self.page_bar_layout.addWidget(btn)
+
+        next_btn = QPushButton(">")
+        next_btn.setFixedSize(28, 28)
+        next_btn.setEnabled(current < total)
+        next_btn.clicked.connect(lambda: self._goto_page(current + 1))
+        self.page_bar_layout.addWidget(next_btn)
+
+    def _total_pages(self) -> int:
+        """Compute total pages from current filter result + page size."""
+        if self._page_size == self._PAGE_SIZE_ALL:
+            return 1
+        return max(1, (len(self._visible_filtered) + self._page_size - 1) // self._page_size)
+
+    def _goto_page(self, page: int):
+        """Page-bar button handler. Re-renders without re-filtering."""
+        self._current_page = max(1, min(page, self._total_pages()))
+        self._render_current_page()
+
     def on_proxy_clicked(self, proxy_name: str):
         """Handle proxy card click - show details"""
         data = self.proxy_manager.load(proxy_name)
@@ -661,7 +852,18 @@ Notes: {data.get('notes', '—')}"""
         
         try:
             self.proxy_manager.delete(proxy_name)
-            self._all_cards = [c for c in self._all_cards if c._name != proxy_name]
+            self._selected_proxies.discard(proxy_name)
+            remaining = []
+            for c in self._all_cards:
+                if c._name == proxy_name:
+                    c.setParent(None)
+                    c.deleteLater()
+                else:
+                    remaining.append(c)
+            self._all_cards = remaining
+            has_selection = len(self._selected_proxies) > 0
+            self.delete_selected_btn.setEnabled(has_selection)
+            self.test_selected_btn.setEnabled(has_selection)
             self._update_title(len(self._all_cards))
             self._apply_filter()
         except Exception as exc:
@@ -841,9 +1043,17 @@ Notes: {data.get('notes', '—')}"""
                 return
             
             success_count, errors = self.proxy_manager.bulk_import(lines)
-            
+
+            # Spec §6.1: after bulk import, surface freshly imported proxies
+            # by switching to "Date newest" + first page.
+            if success_count > 0:
+                self.sort_combo.blockSignals(True)
+                self.sort_combo.setCurrentIndex(self._SORT_NEWEST_INDEX)
+                self.sort_combo.blockSignals(False)
+                self._current_page = 1
+
             self.refresh_proxies()
-            
+
             msg = f"Successfully imported {success_count} proxy(ies)."
             if errors:
                 msg += f"\n\nErrors:\n" + "\n".join(errors[:10])

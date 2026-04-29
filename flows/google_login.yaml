@@ -1,0 +1,111 @@
+schema_version: 1
+name: google_login
+description: |
+  Stand-alone Google sign-in. Navigates to accounts.google.com/signin,
+  fills email + password, lets Google land on its post-auth page (My
+  Account, Welcome screen, or wherever the account is sent). The
+  resulting Google session is persisted in the profile cookies, so any
+  later flow against a Google-OAuth site (x.com, YouTube, etc.) can
+  short-circuit auth.
+
+  All clicks use `human=false` and `force=true` to bypass HumanMouse on
+  Firefox 115 and any subtree-intercept actionability check.
+
+inputs:
+  email:
+    type: string
+    required: true
+  password:
+    type: string
+    required: true
+  out_dir:
+    type: string
+    default: "data/runs/google-login"
+
+defaults:
+  on_error:
+    action: abort
+
+steps:
+  - id: open_signin
+    type: browser.goto
+    url: "https://accounts.google.com/signin"
+    wait_until: load
+    timeout_ms: 30000
+
+  - id: settle_after_open
+    type: control.sleep
+    ms: 1500
+
+  - id: snap_email_page
+    type: browser.screenshot
+    path: "{{ inputs.out_dir }}/01-email-page.png"
+    full_page: true
+    on_error: { action: skip }
+
+  - id: wait_email_field
+    type: browser.wait_for
+    selector: 'input[type="email"], #identifierId, input[name="identifier"]'
+    state: visible
+    timeout_ms: 30000
+
+  - id: type_email
+    type: browser.type
+    selector: 'input[type="email"], #identifierId, input[name="identifier"]'
+    text: "{{ inputs.email }}"
+    clear_first: true
+    human: false
+
+  - id: click_email_next
+    type: browser.click
+    selector: '#identifierNext, [jsname="LgbsSe"]:has-text("Tiếp theo"), [jsname="LgbsSe"]:has-text("Next"), button:has-text("Tiếp theo"), button:has-text("Next")'
+    human: false
+    force: true
+
+  - id: settle_password_page
+    type: control.sleep
+    ms: 2500
+
+  - id: snap_password_page
+    type: browser.screenshot
+    path: "{{ inputs.out_dir }}/02-password-page.png"
+    full_page: true
+    on_error: { action: skip }
+
+  - id: wait_password_field
+    type: browser.wait_for
+    selector: 'input[type="password"], input[name="Passwd"]'
+    state: visible
+    timeout_ms: 30000
+
+  - id: type_password
+    type: browser.type
+    selector: 'input[type="password"], input[name="Passwd"]'
+    text: "{{ inputs.password }}"
+    clear_first: true
+    human: false
+
+  - id: click_password_next
+    type: browser.click
+    selector: '#passwordNext, [jsname="LgbsSe"]:has-text("Tiếp theo"), [jsname="LgbsSe"]:has-text("Next"), button:has-text("Tiếp theo"), button:has-text("Next")'
+    human: false
+    force: true
+
+  - id: settle_postauth
+    type: control.sleep
+    ms: 6000
+
+  - id: snap_postauth
+    type: browser.screenshot
+    path: "{{ inputs.out_dir }}/03-postauth.png"
+    full_page: true
+    on_error: { action: skip }
+
+  - id: capture_final_url
+    type: extract.url
+    set: final_url
+
+  - id: log_done
+    type: io.log
+    level: info
+    message: "Google sign-in complete. Final URL: {{ vars.final_url }}"

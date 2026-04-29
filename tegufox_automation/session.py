@@ -117,6 +117,22 @@ logging.basicConfig(
 logger = logging.getLogger("tegufox_automation")
 
 
+def _default_excluded_addons() -> list:
+    """Camoufox auto-downloads uBlock Origin and adds it to every session.
+    For automation flows that's hostile — uBO intercepts requests, hides
+    elements, and breaks selectors on OAuth pages and modern SPAs.
+    Excluding it from the addon load list is the only reliable way to
+    keep it from running (the Firefox `extensions.<id>.disabled` pref
+    isn't honored for Camoufox-injected addons).
+    """
+    try:
+        from camoufox.addons import DefaultAddons
+        # Exclude UBO; add others here as Camoufox grows the enum.
+        return [DefaultAddons.UBO]
+    except Exception:
+        return []
+
+
 def _background_channel_kill_prefs() -> Dict[str, Any]:
     """Firefox prefs that disable every background channel that can leak DNS
     (or traffic) *independently of whether a proxy is configured*.
@@ -158,6 +174,22 @@ def _background_channel_kill_prefs() -> Dict[str, Any]:
         'extensions.blocklist.enabled': False,
         'app.update.enabled': False,
         'app.update.auto': False,
+
+        # Ad-block / privacy extensions disabled by default. They intercept
+        # network requests and DOM nodes which can hide login buttons, eat
+        # OAuth iframes, and break flow selectors. Setting per-addon
+        # `.disabled = true` prefs is the same toggle Firefox's about:addons
+        # UI flips; if the extension isn't installed, the pref is a no-op.
+        'extensions.uBlock0@raymondhill.net.disabled': True,
+        'extensions.adguardadblocker@adguard.com.disabled': True,
+        'extensions.{d10d0bf8-f5b5-c8b4-a8b2-2b9879e08c5d}.disabled': True,  # Adblock Plus
+        'extensions.firefox@ghostery.com.disabled': True,
+        'extensions.privacy-badger@eff.org.disabled': True,
+        'extensions.{e58d3966-3d76-4cd9-8552-1582fbc800c1}.disabled': True,  # Adblock for Firefox
+        # Default-disable any auto-installed extension scope so future installs
+        # don't surprise a flow.
+        'extensions.autoDisableScopes': 15,
+        'extensions.startupScanScopes': 0,
 
         # Firefox Accounts / Sync
         'identity.fxaccounts.enabled': False,
@@ -766,6 +798,7 @@ class TegufoxSession:
                 geoip=False,  # Disable geoip to avoid proxy validation
                 proxy=proxy_config,
                 env=camoufox_env,
+                exclude_addons=_default_excluded_addons(),
                 **launch_opts,
             )
         else:
@@ -777,6 +810,7 @@ class TegufoxSession:
                 i_know_what_im_doing=True,
                 geoip=False,
                 env=camoufox_env,
+                exclude_addons=_default_excluded_addons(),
                 **launch_opts,
             )
         
@@ -808,7 +842,37 @@ class TegufoxSession:
         # Create page
         logger.info("Creating new page...")
         self.page = self.context.new_page()
-        
+
+        # Apply global popup-override setting BEFORE the user has a chance
+        # to navigate. add_init_script ensures every future navigation —
+        # incl. window.open replacements — runs the override too.
+        try:
+            from tegufox_core.runtime_settings import get_setting
+            if bool(get_setting("disable_popups", True)):
+                _override_js = (
+                    "(() => {"
+                    "  if (window.__teguPopupsDisabled) return;"
+                    "  window.__teguPopupsDisabled = true;"
+                    "  window.open = function(url) {"
+                    "    if (typeof url === 'string' && url.length > 0) {"
+                    "      window.location.href = url;"
+                    "    }"
+                    "    return window;"
+                    "  };"
+                    "})();"
+                )
+                try:
+                    self.context.add_init_script(_override_js)
+                except Exception as e:
+                    logger.warning(f"add_init_script failed: {e}")
+                try:
+                    self.page.evaluate(_override_js)
+                except Exception:
+                    pass
+                logger.info("Global popup override active (settings.disable_popups=True)")
+        except Exception as e:
+            logger.warning(f"runtime_settings probe failed: {e}")
+
         # Add page lifecycle event listeners
         def on_page_close(page):
             logger.warning(f"Page closed: {page}")

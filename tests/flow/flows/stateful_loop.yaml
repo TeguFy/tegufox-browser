@@ -1,0 +1,20 @@
+schema_version: 1
+name: stateful_loop
+inputs:
+  base_url:
+    type: string
+    required: true
+steps:
+  - id: load_count
+    type: state.load
+    key: counter
+    set: count
+    default: 0
+  - id: bump
+    type: control.set
+    var: count
+    value: "vars.count + 1"
+  - id: save_count
+    type: state.save
+    key: counter
+    value: "vars.count"

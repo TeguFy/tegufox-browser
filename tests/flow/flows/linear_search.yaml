@@ -1,0 +1,23 @@
+schema_version: 1
+name: linear_search
+inputs:
+  base_url:
+    type: string
+    required: true
+steps:
+  - id: open
+    type: browser.goto
+    url: "{{ inputs.base_url }}/search.html"
+  - id: type_q
+    type: browser.type
+    selector: "#q"
+    text: "world"
+    human: false
+  - id: click_go
+    type: browser.click
+    selector: "#go"
+    human: false
+  - id: read
+    type: extract.read_text
+    selector: "#out"
+    set: result

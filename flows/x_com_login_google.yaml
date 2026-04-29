@@ -1,0 +1,228 @@
+schema_version: 1
+name: x_com_login_google
+description: |
+  Log into x.com (Twitter) via "Sign in with Google" OAuth popup.
+
+  IMPORTANT — selectors are best guesses; x.com's DOM changes often.
+  Use the Pick Element button in the editor against your real account
+  to capture stable selectors before relying on this in production.
+
+  Notes:
+    * Account 2FA / verification challenges are NOT handled.
+    * If Google flags the login as "untrusted device", the flow will
+      get stuck on the device-confirmation page; manual Resume
+      (tegufox-cli flow run ... --resume <run_id>) may be needed.
+    * After login, the flow saves a screenshot of the home timeline
+      so you can verify success without scraping anything else.
+
+inputs:
+  email:
+    type: string
+    required: true
+  password:
+    type: string
+    required: true
+  out_dir:
+    type: string
+    default: "data/runs/x-com"
+
+defaults:
+  on_error:
+    action: abort
+
+steps:
+  # -----------------------------------------------------------------
+  # Step 1: open x.com and click "Sign in"
+  # -----------------------------------------------------------------
+  # Note: window.open override lives RIGHT BEFORE click_google_signin,
+  # not at session start, because x.com's own JS uses window.open for
+  # legit one-tap rendering during page init — overriding it that early
+  # leaves the login modal half-rendered.
+  - id: open_home
+    type: browser.goto
+    url: "https://x.com/"
+    wait_until: load
+    timeout_ms: 30000
+
+  - id: wait_signin_btn
+    type: browser.wait_for
+    selector: 'a[href="/login"], a[data-testid="loginButton"]'
+    timeout_ms: 15000
+
+  - id: click_signin
+    type: browser.click
+    selector: 'a[href="/login"], a[data-testid="loginButton"]'
+    human: false
+
+  # -----------------------------------------------------------------
+  # Step 2: on /login, click "Sign in with Google"
+  # -----------------------------------------------------------------
+  # IMPORTANT — x.com renders Google SSO via Google Identity Services
+  # which uses a cross-origin iframe. The exact wrapper selector drifts
+  # weekly. Three strategies are tried in order via comma fallback;
+  # Playwright's `:has-text()` matches innerText reliably across DOM
+  # rewrites. If ALL of these miss, USE THE PICK ELEMENT BUTTON in the
+  # editor to capture today's correct selector.
+  - id: pre_google_screenshot
+    type: browser.screenshot
+    path: "{{ inputs.out_dir }}/01-before-google.png"
+    full_page: true
+    on_error:
+      action: skip
+
+  # NOTE about Escape and One Tap:
+  # We tried pressing Escape to dismiss Google One Tap, but on x.com's
+  # /i/flow/login route Escape ALSO closes the whole login modal and
+  # navigates back. Skip that — the :has-text engine doesn't pierce
+  # cross-origin iframes anyway, so the One Tap iframe is naturally
+  # invisible to our selectors. Just settle a moment for the page to
+  # render and target the main button.
+
+  - id: settle_login_page
+    type: control.sleep
+    ms: 1500
+
+  - id: pre_google_button_screenshot
+    type: browser.screenshot
+    path: "{{ inputs.out_dir }}/01b-login-modal.png"
+    full_page: true
+    on_error:
+      action: skip
+
+  # NOTE — Playwright's `text=` selector engine cannot be mixed with CSS
+  # in a comma-separated list. Use only :has-text() / attribute CSS here.
+  # x.com renders buttons as <div role="button" tabindex="0"> wrapping a
+  # nested <span> with the visible text, so we match all common
+  # role/tag containers.
+  - id: wait_google_btn
+    type: browser.wait_for
+    selector: '[role="button"]:has-text("Đăng nhập bằng Google"), [role="button"]:has-text("Sign in with Google"), [role="link"]:has-text("Đăng nhập bằng Google"), button:has-text("Đăng nhập bằng Google"), button:has-text("Sign in with Google"), a:has-text("Đăng nhập bằng Google"), div[tabindex]:has-text("Đăng nhập bằng Google"), iframe[src*="accounts.google.com/gsi"], iframe[title*="Google"]'
+    timeout_ms: 30000
+
+  # JUST BEFORE clicking Google: redirect window.open → same-tab nav so
+  # Camoufox can't isolate the popup into an unreachable process.
+  - id: disable_popups_before_oauth
+    type: browser.disable_popups
+
+  - id: click_google_signin
+    type: browser.click
+    selector: '[role="button"]:has-text("Đăng nhập bằng Google"), [role="button"]:has-text("Sign in with Google"), [role="link"]:has-text("Đăng nhập bằng Google"), button:has-text("Đăng nhập bằng Google"), button:has-text("Sign in with Google"), a:has-text("Đăng nhập bằng Google"), div[tabindex]:has-text("Đăng nhập bằng Google"), iframe[src*="accounts.google.com/gsi"], iframe[title*="Google"]'
+    human: false
+    force: true
+
+  # -----------------------------------------------------------------
+  # Step 3: wait for Google OAuth — scans pages across all browser
+  # contexts (Camoufox sometimes opens popup in an isolated window).
+  # If this still times out, the popup is in a fully-detached browser
+  # process Playwright can't reach; user must complete login manually
+  # in the visible popup window. The flow's later steps will only
+  # re-engage automation once ctx.page can switch to the OAuth page.
+  # -----------------------------------------------------------------
+  - id: wait_oauth_popup
+    type: browser.wait_for_url
+    url_contains: "accounts.google.com"
+    timeout_ms: 30000
+
+  # -----------------------------------------------------------------
+  # Step 4: settle into popup, then enter email.
+  # Google v3 uses input[type=email] as the primary identifier; older
+  # forms use #identifierId. Multi-locale: button labels include
+  # "Next" (en), "Tiếp theo" (vi), etc. — use :has-text fallbacks.
+  # -----------------------------------------------------------------
+  - id: post_popup_settle
+    type: control.sleep
+    ms: 2000
+
+  - id: pre_email_screenshot
+    type: browser.screenshot
+    path: "{{ inputs.out_dir }}/02-popup-email-page.png"
+    full_page: true
+    on_error:
+      action: skip
+
+  - id: wait_email_field
+    type: browser.wait_for
+    selector: 'input[type="email"], #identifierId, input[name="identifier"]'
+    state: visible
+    timeout_ms: 30000
+
+  - id: type_email
+    type: browser.type
+    selector: 'input[type="email"], #identifierId, input[name="identifier"]'
+    text: "{{ inputs.email }}"
+    clear_first: true
+    human: false
+
+  - id: click_email_next
+    type: browser.click
+    selector: '#identifierNext, button:has-text("Tiếp theo"), button:has-text("Next"), [jsname="LgbsSe"]'
+    human: false
+
+  # -----------------------------------------------------------------
+  # Step 5: enter password
+  # -----------------------------------------------------------------
+  - id: pre_password_screenshot
+    type: browser.screenshot
+    path: "{{ inputs.out_dir }}/03-popup-password-page.png"
+    full_page: true
+    on_error:
+      action: skip
+
+  - id: wait_password_field
+    type: browser.wait_for
+    selector: 'input[type="password"], input[name="Passwd"]'
+    state: visible
+    timeout_ms: 30000
+
+  - id: type_password
+    type: browser.type
+    selector: 'input[type="password"], input[name="Passwd"]'
+    text: "{{ inputs.password }}"
+    clear_first: true
+    human: false
+
+  - id: click_password_next
+    type: browser.click
+    selector: '#passwordNext, button:has-text("Tiếp theo"), button:has-text("Next"), [jsname="LgbsSe"]'
+    human: false
+
+  # -----------------------------------------------------------------
+  # Step 6: wait for the popup to close, then switch back to x.com
+  # -----------------------------------------------------------------
+  # After successful auth, Google closes the popup and x.com finishes
+  # the redirect. We give it some time, then explicitly switch back.
+  - id: post_auth_settle
+    type: control.sleep
+    ms: 6000
+
+  # No switch_to_main needed: with popups disabled, the whole OAuth
+  # flow happened in the main tab, and after Google redirects back
+  # we're already on x.com.
+
+  # -----------------------------------------------------------------
+  # Step 7: confirm we landed on the timeline + save screenshot
+  # -----------------------------------------------------------------
+  - id: wait_home_timeline
+    type: browser.wait_for
+    selector: 'div[data-testid="primaryColumn"], a[data-testid="AppTabBar_Home_Link"]'
+    state: visible
+    timeout_ms: 30000
+    on_error:
+      action: skip
+
+  - id: read_url_after_login
+    type: extract.url
+    set: final_url
+
+  - id: log_url
+    type: io.log
+    level: info
+    message: "Final URL after login: {{ vars.final_url }}"
+
+  - id: screenshot
+    type: browser.screenshot
+    path: "{{ inputs.out_dir }}/login-result.png"
+    full_page: true
+
+editor:
+  positions: {}

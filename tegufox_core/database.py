@@ -33,6 +33,64 @@ from pathlib import Path
 Base = declarative_base()
 
 
+# ---------------------------------------------------------------------------
+# Schema migrations for SQLite
+# ---------------------------------------------------------------------------
+# Base.metadata.create_all() only creates *missing* tables; it does NOT
+# ALTER existing tables to add new columns. When we add a column to an
+# existing model (e.g. flow_runs.batch_id added in sub-project #2) databases
+# created before that change have a stale schema. ensure_schema() applies
+# additive migrations idempotently: detect missing columns via inspection
+# and ALTER TABLE ADD COLUMN. SQLite cannot add FK constraints via ALTER,
+# but we don't enforce FKs at runtime so a plain column suffices.
+
+def ensure_schema(engine) -> None:
+    """Apply additive schema migrations on top of create_all().
+
+    Safe to call multiple times. Currently handles:
+      - flow_runs.batch_id (added by sub-project #2)
+      - flow_runs.kind (added by sub-project #7)
+      - flow_runs.goal_text (added by sub-project #7)
+    """
+    from sqlalchemy import inspect
+
+    insp = inspect(engine)
+    table_names = set(insp.get_table_names())
+
+    if "flow_runs" in table_names:
+        cols = {c["name"] for c in insp.get_columns("flow_runs")}
+        if "batch_id" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE flow_runs ADD COLUMN batch_id VARCHAR(64)"
+                ))
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_flow_runs_batch_id "
+                    "ON flow_runs(batch_id)"
+                ))
+        if "kind" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE flow_runs ADD COLUMN kind VARCHAR(16) "
+                    "NOT NULL DEFAULT 'flow'"
+                ))
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_flow_runs_kind "
+                    "ON flow_runs(kind)"
+                ))
+        if "goal_text" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE flow_runs ADD COLUMN goal_text TEXT"
+                ))
+
+
+def create_all_and_migrate(engine) -> None:
+    """create_all() + ensure_schema() in one call. Use this everywhere."""
+    Base.metadata.create_all(engine)
+    ensure_schema(engine)
+
+
 class Profile(Base):
     """Main profile table"""
 
@@ -367,6 +425,101 @@ class Proxy(Base):
         if self.proxy_name:
             result["proxy_name"] = self.proxy_name
         return result
+
+
+class FlowRecord(Base):
+    """Flow definition record"""
+
+    __tablename__ = "flows"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(255), unique=True, nullable=False, index=True)
+    description = Column(Text)
+    yaml_text = Column(Text, nullable=False)
+    schema_version = Column(Integer, nullable=False, default=1)
+    created_at = Column(DateTime, nullable=False)
+    updated_at = Column(DateTime, nullable=False)
+
+
+class FlowRun(Base):
+    """Flow execution record"""
+
+    __tablename__ = "flow_runs"
+
+    run_id = Column(String(64), primary_key=True)
+    flow_id = Column(Integer, ForeignKey("flows.id"), nullable=False, index=True)
+    profile_name = Column(String(255), nullable=False, index=True)
+    inputs_json = Column(Text, nullable=False, default="{}")
+    status = Column(String(32), nullable=False, default="running", index=True)
+    started_at = Column(DateTime, nullable=False)
+    finished_at = Column(DateTime)
+    last_step_id = Column(String(255))
+    error_text = Column(Text)
+    batch_id = Column(String(64), ForeignKey("flow_batches.batch_id"), nullable=True, index=True)
+    kind = Column(String(16), nullable=False, default="flow", index=True)
+    goal_text = Column(Text)
+
+
+class FlowCheckpoint(Base):
+    """Flow execution checkpoint/state snapshot"""
+
+    __tablename__ = "flow_checkpoints"
+
+    run_id = Column(String(64), primary_key=True)
+    seq = Column(Integer, primary_key=True)
+    step_id = Column(String(255), nullable=False)
+    vars_json = Column(Text, nullable=False, default="{}")
+    created_at = Column(DateTime, nullable=False)
+
+
+class FlowKVState(Base):
+    """Flow key-value state storage"""
+
+    __tablename__ = "flow_kv_state"
+
+    flow_name = Column(String(255), primary_key=True)
+    key = Column(String(255), primary_key=True)
+    value_json = Column(Text, nullable=False)
+    updated_at = Column(DateTime, nullable=False)
+
+
+class FlowBatch(Base):
+    __tablename__ = "flow_batches"
+
+    batch_id    = Column(String(64), primary_key=True)
+    flow_id     = Column(Integer, ForeignKey("flows.id"), nullable=False, index=True)
+    inputs_json = Column(Text, nullable=False, default="{}")
+    status      = Column(String(32), nullable=False, default="running", index=True)
+    total       = Column(Integer, nullable=False, default=0)
+    succeeded   = Column(Integer, nullable=False, default=0)
+    failed      = Column(Integer, nullable=False, default=0)
+    started_at  = Column(DateTime, nullable=False)
+    finished_at = Column(DateTime)
+
+
+class FlowSchedule(Base):
+    """Scheduled flow runs (cron + one-shot).
+
+    cron_expression non-null → recurring on that cron.
+    run_at non-null & cron_expression null → one-shot at that time.
+    next_run_at is the upcoming firing time the scheduler polls for.
+    """
+    __tablename__ = "flow_schedules"
+
+    id              = Column(Integer, primary_key=True)
+    name            = Column(String(255), nullable=False)
+    flow_name       = Column(String(255), nullable=False, index=True)
+    profile_name    = Column(String(255), nullable=False)
+    proxy_name      = Column(String(255))
+    inputs_json     = Column(Text, nullable=False, default="{}")
+    cron_expression = Column(String(255))
+    run_at          = Column(DateTime)
+    enabled         = Column(Boolean, nullable=False, default=True, index=True)
+    next_run_at     = Column(DateTime, index=True)
+    last_run_id     = Column(String(64))
+    last_run_at     = Column(DateTime)
+    created_at      = Column(DateTime, nullable=False)
+    updated_at      = Column(DateTime, nullable=False)
 
 
 class ProfileDatabase:
