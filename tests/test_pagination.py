@@ -1,7 +1,5 @@
 """Tests for tegufox_gui.utils.pagination."""
 
-import pytest
-
 from tegufox_gui.utils.pagination import compute_page_window
 
 
