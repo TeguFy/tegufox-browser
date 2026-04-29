@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from tegufox_flow.steps import StepSpec, get_handler
@@ -385,6 +386,8 @@ class AgentRunner:
         stop_event: Optional[threading.Event] = None,
         on_step=None,
         on_ask_user=None,
+        db_path: str = "data/tegufox.db",
+        record_as_flow: bool = False,
     ):
         self.goal = goal
         self.profile_name = profile_name
@@ -396,11 +399,108 @@ class AgentRunner:
         self._stop = stop_event or threading.Event()
         self._on_step = on_step
         self._on_ask_user = on_ask_user
+        self.db_path = db_path
+        self.record_as_flow = bool(record_as_flow)
         self.run_id = str(uuid.uuid4())
+        self._db_session_factory = self._make_session_factory()
+
+    def _make_session_factory(self):
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from pathlib import Path
+        from tegufox_core.database import Base, ensure_schema
+        eng = create_engine(f"sqlite:///{Path(self.db_path).resolve()}")
+        Base.metadata.create_all(eng)
+        ensure_schema(eng)
+        return sessionmaker(bind=eng)
+
+    def _persist_run_start(self) -> None:
+        from tegufox_core.database import FlowRecord, FlowRun
+        S = self._db_session_factory
+        with S() as s:
+            now = datetime.utcnow()
+            agent_flow = (s.query(FlowRecord)
+                          .filter_by(name="__agent__").first())
+            if agent_flow is None:
+                agent_flow = FlowRecord(
+                    name="__agent__", yaml_text="(agent runs)",
+                    schema_version=1, created_at=now, updated_at=now,
+                )
+                s.add(agent_flow); s.commit()
+            run_row = FlowRun(
+                run_id=self.run_id, flow_id=agent_flow.id,
+                profile_name=self.profile_name,
+                inputs_json=json.dumps({"goal": self.goal}, default=str),
+                status="running", started_at=now,
+                kind="agent", goal_text=self.goal,
+            )
+            s.add(run_row)
+            s.commit()
+
+    def _persist_step(self, seq: int, verb: str, payload: Dict[str, Any]) -> None:
+        from tegufox_core.database import FlowCheckpoint
+        S = self._db_session_factory
+        with S() as s:
+            row = FlowCheckpoint(
+                run_id=self.run_id, seq=seq,
+                step_id=f"agent_step_{seq}",
+                vars_json=json.dumps(payload, default=str),
+                created_at=datetime.utcnow(),
+            )
+            s.add(row); s.commit()
+
+    def _persist_run_end(self, result) -> None:
+        from tegufox_core.database import FlowRun
+        S = self._db_session_factory
+        with S() as s:
+            row = s.query(FlowRun).filter_by(run_id=self.run_id).first()
+            if row is None:
+                return
+            row.status = result.status
+            row.finished_at = datetime.utcnow()
+            row.last_step_id = (
+                result.history[-1]["action"]["verb"] if result.history else None
+            )
+            if result.status != "done":
+                row.error_text = result.reason
+            s.commit()
+
+    def _save_flow(self, name: str, yaml_text: str) -> None:
+        from tegufox_core.database import FlowRecord
+        S = self._db_session_factory
+        with S() as s:
+            now = datetime.utcnow()
+            existing = s.query(FlowRecord).filter_by(name=name).first()
+            if existing is None:
+                s.add(FlowRecord(
+                    name=name, yaml_text=yaml_text, schema_version=1,
+                    created_at=now, updated_at=now,
+                ))
+            else:
+                existing.yaml_text = yaml_text
+                existing.updated_at = now
+            s.commit()
 
     def run(self) -> AgentResult:
+        self._persist_run_start()
         history: List[Dict[str, Any]] = []
         started = time.monotonic()
+        seq = 0
+
+        def _finish(result: AgentResult) -> AgentResult:
+            if result.status == "done" and self.record_as_flow and result.history:
+                try:
+                    flow_name = f"agent-{_slug(self.goal)}-{int(time.time())}"
+                    yaml_text = _history_to_flow_yaml(
+                        goal=self.goal, history=result.history,
+                        flow_name=flow_name,
+                    )
+                    self._save_flow(flow_name, yaml_text)
+                    result.flow_yaml = yaml_text
+                except Exception as e:
+                    _LOG.warning(f"auto-record failed: {e}")
+            self._persist_run_end(result)
+            return result
 
         try:
             with TegufoxSession(profile=self.profile_name) as session:
@@ -409,16 +509,16 @@ class AgentRunner:
 
                 while step_i < self.max_steps:
                     if self._stop.is_set():
-                        return AgentResult(
+                        return _finish(AgentResult(
                             run_id=self.run_id, status="aborted",
                             reason="user stop", steps=step_i, history=history,
-                        )
+                        ))
                     if (time.monotonic() - started) > self.max_time:
-                        return AgentResult(
+                        return _finish(AgentResult(
                             run_id=self.run_id, status="timeout",
                             reason=f"exceeded {self.max_time}s",
                             steps=step_i, history=history,
-                        )
+                        ))
 
                     obs = _observe(session.page)
                     try:
@@ -427,10 +527,10 @@ class AgentRunner:
                             provider=self.provider, model=self.model,
                         )
                     except ParseError as e:
-                        return AgentResult(
+                        return _finish(AgentResult(
                             run_id=self.run_id, status="parse_error",
                             reason=str(e), steps=step_i, history=history,
-                        )
+                        ))
 
                     if self._on_step is not None:
                         try:
@@ -439,11 +539,11 @@ class AgentRunner:
                             pass
 
                     if action.verb == "done":
-                        return AgentResult(
+                        return _finish(AgentResult(
                             run_id=self.run_id, status="done",
                             reason=action.args.get("reason", ""),
                             steps=step_i, history=history,
-                        )
+                        ))
                     if action.verb == "ask_user":
                         question = action.args.get("question", "")
                         reply = ""
@@ -453,15 +553,16 @@ class AgentRunner:
                             except Exception:
                                 reply = ""
                         if not reply:
-                            return AgentResult(
+                            return _finish(AgentResult(
                                 run_id=self.run_id, status="aborted",
                                 reason=f"ask_user cancelled: {question}",
                                 steps=step_i, history=history,
-                            )
-                        history.append({
-                            "obs": obs, "action": action.__dict__,
-                            "result": {"user_reply": reply},
-                        })
+                            ))
+                        seq += 1
+                        turn = {"obs": obs, "action": action.__dict__,
+                                "result": {"user_reply": reply}}
+                        history.append(turn)
+                        self._persist_step(seq, "ask_user", turn)
                         step_i += 1
                         continue
 
@@ -469,20 +570,111 @@ class AgentRunner:
                         result = dispatch_action(action, ctx)
                     except Exception as e:
                         result = {"error": f"{type(e).__name__}: {e}"}
-                    history.append({
-                        "obs": obs, "action": action.__dict__, "result": result,
-                    })
+                    seq += 1
+                    turn = {"obs": obs, "action": action.__dict__,
+                            "result": result}
+                    history.append(turn)
+                    self._persist_step(seq, action.verb, turn)
                     step_i += 1
 
-                return AgentResult(
+                return _finish(AgentResult(
                     run_id=self.run_id, status="max_steps",
                     reason=f"hit max_steps={self.max_steps}",
                     steps=step_i, history=history,
-                )
+                ))
         except Exception as e:
             _LOG.exception("agent runner crashed")
-            return AgentResult(
+            return _finish(AgentResult(
                 run_id=self.run_id, status="error",
                 reason=f"{type(e).__name__}: {e}",
                 steps=len(history), history=history,
-            )
+            ))
+
+
+# ---------------------------------------------------------------------------
+# 5. Auto-record history → flow YAML
+# ---------------------------------------------------------------------------
+
+import re as _re_slug
+
+
+def _slug(s: str) -> str:
+    s = (s or "").lower()
+    s = _re_slug.sub(r"[^a-z0-9]+", "-", s).strip("-")
+    return s[:60] or "anon"
+
+
+_VERB_TO_STEP_TYPE = {
+    "goto":       "browser.goto",
+    "click":      "browser.click",
+    "click_text": "browser.click_text",
+    "type":       "browser.type",
+    "scroll":     "browser.scroll",
+    "wait_for":   "browser.wait_for",
+    "read_text":  "extract.read_text",
+    "screenshot": "browser.screenshot",
+}
+
+
+def _history_to_flow_yaml(*, goal: str, history: List[Dict[str, Any]],
+                          flow_name: str) -> str:
+    """Serialise an agent's successful action history into a runnable
+    flow YAML. ask_user turns are promoted to flow inputs, and the next
+    verb that consumed the reply is rewritten to reference the input
+    via Jinja template.
+    """
+    inputs: Dict[str, Dict[str, Any]] = {}
+    steps: List[Dict[str, Any]] = []
+    pending_input: Optional[str] = None
+
+    for i, turn in enumerate(history):
+        action = turn.get("action") or {}
+        verb = action.get("verb")
+        args = dict(action.get("args") or {})
+
+        if verb == "ask_user":
+            input_name = f"ask_{_slug(args.get('question', ''))}"
+            inputs[input_name] = {
+                "type": "string",
+                "required": True,
+                "default": (turn.get("result") or {}).get("user_reply", ""),
+            }
+            pending_input = input_name
+            continue
+
+        if verb in ("done", "ask_user"):
+            continue
+
+        if verb not in _VERB_TO_STEP_TYPE:
+            continue
+
+        if pending_input is not None:
+            for k, v in list(args.items()):
+                if isinstance(v, str) and v == \
+                        inputs[pending_input]["default"]:
+                    args[k] = "{{ inputs." + pending_input + " }}"
+            pending_input = None
+
+        if verb == "click":
+            args.setdefault("force", True)
+            args.setdefault("human", False)
+        if verb == "type":
+            args.setdefault("human", False)
+        if verb == "click_text":
+            args.setdefault("force", True)
+
+        step = {"id": f"step_{i+1}", "type": _VERB_TO_STEP_TYPE[verb]}
+        step.update(args)
+        steps.append(step)
+
+    flow: Dict[str, Any] = {
+        "schema_version": 1,
+        "name": flow_name,
+        "description": f"Auto-recorded agent run. Goal: {goal}",
+    }
+    if inputs:
+        flow["inputs"] = inputs
+    flow["steps"] = steps
+
+    import yaml as _yaml
+    return _yaml.safe_dump(flow, sort_keys=False, allow_unicode=True)
