@@ -15,6 +15,19 @@ from pathlib import Path
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
+try:
+    import sqlalchemy  # noqa: F401
+    from PyQt6.QtWidgets import QApplication  # noqa: F401
+except ImportError as e:
+    venv_python = Path(__file__).parent / "venv" / "bin" / "python"
+    print(
+        f"Error: missing dependency ({e}).\n"
+        "You are probably using system python instead of the project venv.\n"
+        f"Fix: source venv/bin/activate  OR  run: {venv_python} ./tegufox-gui",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
 from tegufox_gui.app import main
 
 if __name__ == "__main__":

@@ -5,12 +5,16 @@ Keeps a single source of truth for "what versions are realistic today" so every
 call site (profile_generator, profile_manager, session, generator_v2) rotates
 through the same current-year pool.
 
-Pools as of 2026-04-24:
-- Firefox: 137 .. 146  (CAPPED at the Tegufox binary's real base version,
-           Camoufox 146.0.1-beta.25. Claiming 147+ in UA while the Gecko engine
-           is 146 is detectable via JS feature probes — which is exactly the
-           `browser claims 150 / detect 146` mismatch the detection site caught.
-           Bump this ceiling only when you rebuild the binary on a newer base.)
+Pools as of 2026-09-05:
+- Firefox: 152.0.4 (matches the installed stock Camoufox 152.0.4-beta.29
+           engine, BuildID 20260820175416 from its application.ini.
+           The old 146.0.x pinning applied to the unbuilt custom Tegufox
+           binary; with the stock engine live, profiles claim 152 so UA,
+           rv: token, buildID and JS feature probes stay mutually
+           consistent. Re-pin this pool when the custom binary is built.)
+- Chrome:  138 .. 147  (147 stable 2026-04-07). Tegufox doesn't ship a Chrome
+           build; this pool is only used for synthetic profile templates, never
+           for the launched browser.
 - Chrome:  138 .. 147  (147 stable 2026-04-07). Tegufox doesn't ship a Chrome
            build; this pool is only used for synthetic profile templates, never
            for the launched browser.
@@ -31,22 +35,20 @@ from __future__ import annotations
 import random
 from typing import Dict, List, Optional
 
-# IMPORTANT: these MUST match the Gecko engine exactly.
-# Tegufox ships `camoufox-source/camoufox-146.0.1-beta.25/` whose
-# `config/milestone.txt` is `146.0.1`. Any UA version *other than* a real
-# 146.0.x point release is detectable via JS feature probes — we saw both
-# "claims 150 / detect 146" and "claims 143 / detect 146" banners, proving
-# the detector bypasses UA and reads engine-level feature presence.
+# IMPORTANT: these MUST match the Gecko engine actually launching profiles.
+# Live engine is stock Camoufox 152.0.4-beta.29 (`application.ini`:
+# Version=152.0.4-beta.29, BuildID=20260820175416). Claiming any other major
+# in UA while the engine answers feature probes as 152 is detectable.
 #
-# When the binary is rebuilt on a newer base: update BOTH this constant AND
-# the camoufox-source directory name. They are the single source of truth.
-TEGUFOX_FIREFOX_BASE_MAJOR = 146
-TEGUFOX_FIREFOX_MILESTONE  = "146.0.1"
-# Real Firefox 146.0.x point releases (Mozilla normally ships 146.0 + 1-3
-# dot-patches before advancing to 147). We rotate only across shipped
-# point releases so every profile's UA remains feature-consistent with
-# the engine.
-FIREFOX_LATEST_VERSIONS: List[str] = ["146.0", "146.0.1"]
+# When the custom Tegufox binary is built: update BOTH this constant AND the
+# engine, then re-pin the pool below. They are the single source of truth.
+TEGUFOX_FIREFOX_BASE_MAJOR = 152
+TEGUFOX_FIREFOX_MILESTONE  = "152.0.4"
+# Single-entry pool: 152.0.4 is the exact shipped engine build, so UA,
+# rv: token and buildID are all mutually verifiable. Add further 152.0.x
+# point releases here only if their real calendar buildIDs are known
+# (invented buildIDs fail cross-checks against Mozilla's release calendar).
+FIREFOX_LATEST_VERSIONS: List[str] = ["152.0.4"]
 CHROME_LATEST_VERSIONS:  List[int] = [138, 139, 140, 141, 142, 143, 144, 145, 146, 147]
 
 # Safari observed-in-the-wild desktop pairs. Each entry:
@@ -74,7 +76,7 @@ CHROME_MAC_TOKEN_FROZEN  = "10_15_7"
 
 
 def random_firefox_version(rng: Optional[random.Random] = None) -> str:
-    """Return a Firefox version string like '146.0' or '146.0.1'."""
+    """Return a Firefox version string like '152.0.4'."""
     return (rng or random).choice(FIREFOX_LATEST_VERSIONS)
 
 
@@ -95,8 +97,8 @@ def random_safari_combo(rng: Optional[random.Random] = None) -> Dict[str, str]:
 def build_firefox_ua(os_name: str, version: Optional[str] = None) -> str:
     """Build a Firefox UA.
 
-    `version` accepts either a full point release like '146.0.1' or a major-only
-    string like '146'. The `rv:` token always renders as MAJOR.0 (Mozilla
+    `version` accepts either a full point release like '152.0.4' or a major-only
+    string like '152'. The `rv:` token always renders as MAJOR.0 (Mozilla
     convention); `Firefox/` renders the full version as provided.
     """
     v = str(version) if version is not None else random_firefox_version()
@@ -117,17 +119,17 @@ def build_firefox_ua(os_name: str, version: Optional[str] = None) -> str:
 def firefox_build_id_for(version: str) -> str:
     """Return a plausible 20YYMMDDHHMMSS buildID that matches the engine.
 
-    Tegufox's real Gecko is 146.0.1. Firefox 146 line released ~2025-12-30,
-    146.0.1 ~2026-01-08. Using a single date-of-build keeps navigator.buildID
-    self-consistent with the engine, so detectors that cross-check buildID
-    against Mozilla's release calendar get a plausible answer.
+    The live engine is stock Camoufox 152.0.4-beta.29 whose application.ini
+    records BuildID 20260820175416 — used verbatim below. Legacy 146 entries
+    are kept so older saved profiles still resolve a coherent buildID.
     """
     calendar = {
+        "152.0.4": "20260820175416",
         "146.0":   "20251230000000",
         "146.0.1": "20260108000000",
         "146.0.2": "20260122000000",
     }
-    return calendar.get(str(version), "20260108000000")
+    return calendar.get(str(version), "20260820175416")
 
 
 def build_chrome_ua(os_name: str, version: Optional[int] = None) -> str:

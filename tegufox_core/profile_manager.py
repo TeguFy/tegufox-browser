@@ -38,8 +38,8 @@ try:
         build_safari_ua,
     )
 except ImportError:
-    from database import ProfileDatabase
-    from browser_versions import (
+    from tegufox_core.database import ProfileDatabase
+    from tegufox_core.browser_versions import (
         FIREFOX_LATEST_VERSIONS,
         CHROME_LATEST_VERSIONS,
         SAFARI_LATEST_COMBOS,
@@ -496,6 +496,14 @@ def _expand_modern_version_tables() -> None:
 
 
 _expand_modern_version_tables()
+
+# Backward-compat aliases: short major keys (e.g. "firefox-152") resolve to
+# the pinned engine release. Prevents "Unknown browser" crashes from
+# short-hand references.
+if "firefox-152" not in BROWSER_TEMPLATES and "firefox-152.0.4" in BROWSER_TEMPLATES:
+    BROWSER_TEMPLATES["firefox-152"] = BROWSER_TEMPLATES["firefox-152.0.4"]
+if "firefox-152" not in _OS_NAVIGATOR and "firefox-152.0.4" in _OS_NAVIGATOR:
+    _OS_NAVIGATOR["firefox-152"] = _OS_NAVIGATOR["firefox-152.0.4"]
 
 DOH_PROVIDERS = {
     "cloudflare": {
@@ -1078,6 +1086,8 @@ class ProfileManager:
 
         # Store OS for launch-time Camoufox os= param
         profile["os"] = os
+        # Store browser family (firefox/chrome/safari) for DB indexing/filtering
+        profile["browser"] = browser.split("-")[0].lower()
 
         # Override navigator UA + platform with OS-specific values.
         # Template defaults may target a different OS than requested.
@@ -1099,7 +1109,10 @@ class ProfileManager:
 
         # Generate WebGL fingerprint based on browser/OS/screen
         try:
-            from webgl_database import get_random_webgl, get_webgl_for_profile
+            try:
+                from .webgl_database import get_random_webgl, get_webgl_for_profile
+            except ImportError:
+                from tegufox_core.webgl_database import get_random_webgl, get_webgl_for_profile
 
             # Keep Safari GPU era consistent with Safari major version.
             # safari-16/17: Intel-era Macs (includes AMD dGPU OpenGL strings)

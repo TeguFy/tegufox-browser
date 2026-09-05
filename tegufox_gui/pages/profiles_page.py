@@ -29,24 +29,53 @@ from tegufox_gui.components import ProfileCard
 from tegufox_core.profile_manager import ProfileManager
 from tegufox_core.proxy_manager import ProxyManager, pool_to_profile_snapshot
 
+# Project root (tegufox_gui/pages/ -> tegufox_gui -> root). Never rely on the
+# process working directory: the GUI is often started from Finder/Spotlight
+# with cwd=/, which is neither importable nor writable.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
+
+def _worker_python() -> str:
+    """Interpreter for the launcher child: project venv when present."""
+    venv_python = PROJECT_ROOT / "venv" / "bin" / "python"
+    if venv_python.exists():
+        return str(venv_python)
+    return sys.executable
+
+
+def _launch_log_file() -> Path:
+    """Writable log location for the launcher child process."""
+    try:
+        candidate = PROJECT_ROOT / "tegufox_launch.log"
+        candidate.touch(exist_ok=True)
+        return candidate
+    except OSError:
+        return Path(tempfile.gettempdir()) / "tegufox_launch.log"
+
 
 class BrowserSessionWorker(QThread):
     """Worker thread to launch and monitor a browser session"""
-    
+
     status_changed = pyqtSignal(str, str)  # profile_name, status
-    
+    launch_failed = pyqtSignal(str, str)  # profile_name, error message
+
     def __init__(self, profile_name: str, proxy: dict | None = None, parent=None):
         super().__init__(parent)
         self.profile_name = profile_name
         self._proxy = proxy
         self._stop_requested = False
+        self.process = None
+
+    def _fail(self, message: str):
+        self.launch_failed.emit(self.profile_name, message)
 
     def run(self):
         """Launch browser and wait for it to close"""
+        log_file = _launch_log_file()
         try:
             self.status_changed.emit(self.profile_name, "active")
 
-            cwd = str(Path.cwd())
+            project_root = str(PROJECT_ROOT)
             # Camoufox/Playwright takes server URL + separate username/password.
             proxy_arg = None
             if self._proxy and self._proxy.get("server"):
@@ -60,7 +89,7 @@ class BrowserSessionWorker(QThread):
                 "import sys, time, warnings, logging",
                 "logging.basicConfig(level=logging.DEBUG, format='%(name)s %(levelname)s %(message)s')",
                 "warnings.filterwarnings('ignore')",
-                f"sys.path.insert(0, {repr(cwd)})",
+                f"sys.path.insert(0, {repr(project_root)})",
                 "from tegufox_automation import TegufoxSession, SessionConfig",
                 f"profile_name = {repr(self.profile_name)}",
                 f"proxy = {repr(proxy_arg)}",
@@ -70,34 +99,55 @@ class BrowserSessionWorker(QThread):
                 "        while True:",
                 "            try: sess.page.title(); time.sleep(1)",
                 "            except: break",
-                "except Exception as e:",
+                "except Exception:",
                 "    import traceback; traceback.print_exc()",
-                "    input('Press Enter to close...')",
+                "    sys.exit(1)",
             ]
-            
+
             fd, tmp = tempfile.mkstemp(suffix='.py', prefix='tgf_')
             import os
             os.close(fd)
             Path(tmp).write_text("\n".join(script_lines))
-            
-            log_file = Path(cwd) / "tegufox_launch.log"
+
             with open(log_file, 'w') as lf:
                 self.process = subprocess.Popen(
-                    [sys.executable, tmp], 
-                    stdout=lf, 
-                    stderr=lf
+                    [_worker_python(), "-u", tmp],
+                    stdout=lf,
+                    stderr=subprocess.STDOUT,
+                    stdin=subprocess.DEVNULL,
+                    cwd=project_root,
                 )
-                
+
+            started = time.monotonic()
             # Wait for process to complete
             while self.process.poll() is None and not self._stop_requested:
                 time.sleep(0.5)
-                
+
             if self._stop_requested and self.process.poll() is None:
                 self.process.terminate()
-                self.process.wait(timeout=5)
-                
+                try:
+                    self.process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self.process.kill()
+            elif not self._stop_requested and self.process.poll() not in (None, 0):
+                # Exited on its own with an error. A browser that starts
+                # successfully stays alive until the user closes it, so a
+                # fast non-zero exit means launch failed — surface the cause
+                # instead of silently flipping back to "stopped".
+                tail = ""
+                try:
+                    lines = log_file.read_text(errors="replace").splitlines()
+                    tail = "\n".join(lines[-15:])
+                except OSError:
+                    pass
+                self._fail(
+                    f"Browser exited with code {self.process.poll()}.\n"
+                    f"Log: {log_file}\n\n{tail}"
+                )
+
         except Exception as e:
             print(f"[BrowserSessionWorker] Error: {e}")
+            self._fail(f"{e}\nLog: {log_file}")
         finally:
             self.status_changed.emit(self.profile_name, "stopped")
     
@@ -290,10 +340,36 @@ class ProfilesListWidget(QWidget):
         scroll.setWidget(self._list_widget)
         layout.addWidget(scroll)
 
+    def _dispose_cards(self, cards):
+        """Fully destroy card widgets so deleted rows can't linger as ghosts.
+
+        Qt's takeAt() only detaches from the layout — the widget stays alive
+        as a child and remains visible. Without deleteLater() the deleted
+        profile row stays on screen, looking like delete "didn't work".
+        """
+        for card in cards:
+            try:
+                self._list_layout.removeWidget(card)
+            except Exception:
+                pass
+            try:
+                card.setParent(None)
+                card.deleteLater()
+            except Exception:
+                pass
+
     def load_profiles(self):
+        # Destroy old widgets first — takeAt() alone leaves orphans visible.
+        self._dispose_cards(list(self._all_cards))
         while self._list_layout.count():
-            self._list_layout.takeAt(0)
+            item = self._list_layout.takeAt(0)
+            w = item.widget() if item else None
+            if w is not None:
+                w.setParent(None)
+                w.deleteLater()
         self._all_cards.clear()
+        self._selected_profiles.clear()
+        self.delete_selected_btn.setEnabled(False)
 
         try:
             profile_names = self.profile_manager.list()
@@ -346,8 +422,20 @@ class ProfilesListWidget(QWidget):
         """Delete all selected profiles"""
         if not self._selected_profiles:
             return
-        
-        count = len(self._selected_profiles)
+
+        # Never delete a running session's profile — its browser holds the DB row.
+        running = [n for n in self._selected_profiles if n in self._active_sessions]
+        deletable = [n for n in self._selected_profiles if n not in self._active_sessions]
+        if running:
+            QMessageBox.warning(
+                self, "Cannot Delete",
+                "These profiles are running and were skipped:\n" + "\n".join(sorted(running)) +
+                "\n\nStop the browser session first, then delete.",
+            )
+            if not deletable:
+                return
+
+        count = len(deletable)
         reply = QMessageBox.question(
             self, "Confirm Delete",
             f"Delete {count} selected profile(s)? This cannot be undone.",
@@ -356,26 +444,38 @@ class ProfilesListWidget(QWidget):
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
-        
-        # Delete profiles
+
+        # Delete profiles (ProfileManager.delete returns False when missing
+        # instead of raising — treat that as a failure to report).
         failed = []
-        for profile_name in list(self._selected_profiles):
+        deleted_count = 0
+        for profile_name in list(deletable):
             try:
-                self.profile_manager.delete(profile_name)
+                ok = self.profile_manager.delete(profile_name)
+                if ok:
+                    deleted_count += 1
+                else:
+                    failed.append(f"{profile_name}: not found")
             except Exception as e:
                 failed.append(f"{profile_name}: {str(e)}")
-        
+
         # Clear selection
         self._selected_profiles.clear()
-        
-        # Reload profiles
+        self.delete_selected_btn.setEnabled(False)
+
+        # Reload profiles (destroys old widgets so rows actually disappear)
         self.load_profiles()
-        
-        # Show error if any deletions failed
+
         if failed:
             QMessageBox.warning(
                 self, "Deletion Errors",
+                f"Deleted {deleted_count} profile(s).\n"
                 f"Failed to delete some profiles:\n" + "\n".join(failed)
+            )
+        elif deleted_count:
+            QMessageBox.information(
+                self, "Deleted",
+                f"Deleted {deleted_count} profile(s)."
             )
     
     def open_profile_creator(self):
@@ -489,6 +589,12 @@ class ProfilesListWidget(QWidget):
         dlg.exec()
 
     def on_profile_delete(self, profile_name):
+        if profile_name in self._active_sessions:
+            QMessageBox.warning(
+                self, "Cannot Delete",
+                f"Profile '{profile_name}' is running.\nStop the browser session first, then delete.",
+            )
+            return
         reply = QMessageBox.question(
             self, "Confirm Delete",
             f"Delete profile '{profile_name}'?  This cannot be undone.",
@@ -498,10 +604,20 @@ class ProfilesListWidget(QWidget):
         if reply != QMessageBox.StandardButton.Yes:
             return
         try:
-            self.profile_manager.delete(profile_name)
+            ok = self.profile_manager.delete(profile_name)
+            if not ok:
+                QMessageBox.warning(self, "Not Found", f"Profile '{profile_name}' not found.")
+                return
+            # Destroy the widget — filtering it out of _all_cards alone
+            # leaves the Qt widget visible as an orphan.
+            doomed = [c for c in self._all_cards if c._name == profile_name]
             self._all_cards = [c for c in self._all_cards if c._name != profile_name]
+            self._dispose_cards(doomed)
+            self._selected_profiles.discard(profile_name)
+            self.delete_selected_btn.setEnabled(len(self._selected_profiles) > 0)
             self._update_title(len(self._all_cards))
             self._apply_filter()
+            QMessageBox.information(self, "Deleted", f"Deleted profile '{profile_name}'.")
         except Exception as exc:
             QMessageBox.critical(self, "Error", str(exc))
 
@@ -525,6 +641,7 @@ class ProfilesListWidget(QWidget):
         proxy = data.get("proxy") or None
         worker = BrowserSessionWorker(profile_name, proxy=proxy)
         worker.status_changed.connect(self._on_session_status_changed)
+        worker.launch_failed.connect(self._on_session_launch_failed)
         worker.start()
 
         self._active_sessions[profile_name] = worker
@@ -541,11 +658,19 @@ class ProfilesListWidget(QWidget):
         card = self._find_card(profile_name)
         if card:
             card.set_status(status)
-        
+
         # Clean up worker if stopped
         if status == "stopped" and profile_name in self._active_sessions:
             worker = self._active_sessions.pop(profile_name)
             worker.wait()  # Wait for thread to finish
+
+    def _on_session_launch_failed(self, profile_name: str, message: str):
+        """Show the launcher error instead of silently flipping back to stopped"""
+        QMessageBox.critical(
+            self,
+            "Browser launch failed",
+            f"Profile '{profile_name}' could not start:\n\n{message}",
+        )
     
     def _find_card(self, profile_name: str):
         """Find profile card by name"""

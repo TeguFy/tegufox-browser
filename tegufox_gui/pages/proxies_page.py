@@ -465,11 +465,58 @@ class ProxiesWidget(QWidget):
         scroll.setWidget(self._list_widget)
         layout.addWidget(scroll)
     
+    def _dispose_cards(self, cards):
+        """Fully destroy card widgets so deleted rows can't linger as ghosts.
+
+        Qt's takeAt() only detaches from the layout — the widget stays alive
+        as a child and remains visible. Without deleteLater() the deleted
+        proxy row stays on screen, looking like delete "didn't work".
+        """
+        for card in cards:
+            try:
+                self._list_layout.removeWidget(card)
+            except Exception:
+                pass
+            try:
+                card.setParent(None)
+                card.deleteLater()
+            except Exception:
+                pass
+
+    def _detach_profile_refs(self, proxy_names):
+        """Clear profile snapshots that point at deleted pool proxies."""
+        if not proxy_names:
+            return
+        stale = set(proxy_names)
+        try:
+            all_profiles = self.profile_manager.list()
+        except Exception:
+            return
+        for pname in all_profiles:
+            try:
+                cur = self.profile_manager.get_proxy(pname) or {}
+            except Exception:
+                continue
+            if cur.get("proxy_name") in stale:
+                try:
+                    self.profile_manager.assign_proxy(pname, None)
+                except Exception as e:
+                    print(f"[ProxiesList] Failed to detach proxy from {pname}: {e}")
+
     def load_proxies(self):
         """Load all proxies from database"""
+        # Destroy old widgets first — takeAt() alone leaves orphans visible.
+        self._dispose_cards(list(self._all_cards))
         while self._list_layout.count():
-            self._list_layout.takeAt(0)
+            item = self._list_layout.takeAt(0)
+            w = item.widget() if item else None
+            if w is not None:
+                w.setParent(None)
+                w.deleteLater()
         self._all_cards.clear()
+        self._selected_proxies.clear()
+        self.delete_selected_btn.setEnabled(False)
+        self.test_selected_btn.setEnabled(False)
         
         try:
             proxy_names = self.proxy_manager.list()
@@ -536,14 +583,28 @@ class ProxiesWidget(QWidget):
             return
         
         success_count, errors = self.proxy_manager.delete_multiple(list(self._selected_proxies))
-        
+
+        deleted = list(self._selected_proxies)
         self._selected_proxies.clear()
+        self.delete_selected_btn.setEnabled(False)
+        self.test_selected_btn.setEnabled(False)
+        # Profiles holding a snapshot of a deleted proxy must be detached,
+        # otherwise they show a stale proxy badge pointing nowhere.
+        if success_count:
+            deleted_ok = [n for n in deleted if not any(n in e for e in errors)]
+            self._detach_profile_refs(deleted_ok if deleted_ok else deleted)
         self.load_proxies()
-        
+
         if errors:
             QMessageBox.warning(
                 self, "Deletion Errors",
+                f"Deleted {success_count} proxy(ies).\n"
                 f"Failed to delete some proxies:\n" + "\n".join(errors)
+            )
+        elif success_count:
+            QMessageBox.information(
+                self, "Deleted",
+                f"Deleted {success_count} proxy(ies)."
             )
     
     def test_selected_proxies(self):
@@ -658,12 +719,22 @@ Notes: {data.get('notes', '—')}"""
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
-        
+
         try:
             self.proxy_manager.delete(proxy_name)
+            self._detach_profile_refs([proxy_name])
+            # Destroy the widget — filtering it out of _all_cards alone
+            # leaves the Qt widget visible as an orphan.
+            doomed = [c for c in self._all_cards if c._name == proxy_name]
             self._all_cards = [c for c in self._all_cards if c._name != proxy_name]
+            self._dispose_cards(doomed)
+            self._selected_proxies.discard(proxy_name)
+            has_selection = len(self._selected_proxies) > 0
+            self.delete_selected_btn.setEnabled(has_selection)
+            self.test_selected_btn.setEnabled(has_selection)
             self._update_title(len(self._all_cards))
             self._apply_filter()
+            QMessageBox.information(self, "Deleted", f"Deleted proxy '{proxy_name}'.")
         except Exception as exc:
             QMessageBox.critical(self, "Error", str(exc))
     

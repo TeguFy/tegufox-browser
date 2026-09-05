@@ -751,7 +751,12 @@ class SessionsWidget(QWidget):
                         return line.strip().split("=", 1)[1]
         except Exception:
             pass
-        return "146.0.1"
+        try:
+            from tegufox_core.browser_versions import TEGUFOX_FIREFOX_MILESTONE
+            return TEGUFOX_FIREFOX_MILESTONE
+        except Exception:
+            pass
+        return "152.0.4"
 
     @staticmethod
     def _ff_release():

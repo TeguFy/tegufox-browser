@@ -1,5 +1,23 @@
-import urllib.request
+"""
+Profile Generator for Tegufox Browser
+Generates browser profiles with randomized fingerprints for anti-detection.
+"""
+
 import json
+import random
+import urllib.request
+from datetime import datetime
+from typing import Dict, List, Tuple, Optional
+from .webgl_database import WEBGL_CONFIGS, get_random_webgl, get_webgl_for_profile
+from .database import ProfileDatabase
+from .browser_versions import (
+    build_firefox_ua,
+    build_safari_ua,
+    FIREFOX_LATEST_VERSIONS,
+    SAFARI_LATEST_COMBOS,
+)
+
+
 def get_timezone_from_proxy(proxy_config: dict) -> Tuple[str, int]:
     """Get timezone and offset from proxy IP using ip-api.com."""
     proxy_url = proxy_config.get("server", "")
@@ -20,22 +38,6 @@ def get_timezone_from_proxy(proxy_config: dict) -> Tuple[str, int]:
             return tz, None
     except Exception:
         return None, None
-"""
-Profile Generator for Tegufox Browser
-Generates browser profiles with randomized fingerprints for anti-detection.
-"""
-
-import random
-from datetime import datetime
-from typing import Dict, List, Tuple, Optional
-from .webgl_database import WEBGL_CONFIGS, get_random_webgl, get_webgl_for_profile
-from .database import ProfileDatabase
-from .browser_versions import (
-    build_firefox_ua,
-    build_safari_ua,
-    FIREFOX_LATEST_VERSIONS,
-    SAFARI_LATEST_COMBOS,
-)
 
 
 # Common screen resolutions by OS

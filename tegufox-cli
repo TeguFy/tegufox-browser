@@ -13,9 +13,13 @@ Commands:
     profile validate <name>                  Validate a profile
     fleet generate <count>                   Generate a fleet of profiles
     api start [--port 8420]                  Start the REST API server
-    
+    launch --profile <name>                  Launch browser with profile (README compat)
+
 Examples:
     ./tegufox-cli profile create my-profile chrome-144 windows
+    ./tegufox-cli profile create --name my-profile --browser chrome-144 --os windows
+    ./tegufox-cli profile list
+    ./tegufox-cli launch --profile my-profile
     ./tegufox-cli fleet generate 10
     ./tegufox-cli api start --port 8420
 """
@@ -26,90 +30,217 @@ from pathlib import Path
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
+# Friendly error when run with system python instead of the project venv
+# (system python lacks sqlalchemy/fastapi/pyqt6). Suggests the fix.
+try:
+    import sqlalchemy  # noqa: F401
+except ImportError:
+    venv_python = Path(__file__).parent / "venv" / "bin" / "python"
+    hint = f"{venv_python} ./tegufox-cli"
+    print(
+        "Error: required dependencies are missing (e.g. sqlalchemy).\n"
+        "You are probably using system python instead of the project venv.\n"
+        f"Fix: source venv/bin/activate  OR  run: {hint}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+# Short browser names (README style, e.g. --browser chrome) resolve to
+# pinned, engine-consistent templates.
+BROWSER_ALIASES = {
+    "chrome": "chrome-144",
+    "firefox": "firefox-152.0.4",
+    "safari": "safari-26",
+}
+
+
+def _resolve_browser_template(browser: str, available: list) -> str:
+    """Resolve README-style short names and validate against templates."""
+    if browser in available:
+        return browser
+    lowered = browser.lower()
+    if lowered in BROWSER_ALIASES and BROWSER_ALIASES[lowered] in available:
+        resolved = BROWSER_ALIASES[lowered]
+        print(f"(Resolved browser '{browser}' -> template '{resolved}')")
+        return resolved
+    # Prefix match, e.g. "chrome-120" stays, "chrome" picks newest chrome-*
+    matches = sorted([t for t in available if t.startswith(lowered + "-")])
+    if matches:
+        resolved = matches[-1]
+        print(f"(Resolved browser '{browser}' -> template '{resolved}')")
+        return resolved
+    raise ValueError(
+        f"Unknown browser/template: {browser}. Available: {sorted(available)}"
+    )
+
+
 def main():
     import argparse
     from tegufox_core import ProfileManager, generate_fleet
-    
+    from tegufox_core.profile_manager import BROWSER_TEMPLATES, ValidationLevel
+
     parser = argparse.ArgumentParser(
         description="Tegufox CLI - Browser Fingerprint Management",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__
     )
-    
+
     subparsers = parser.add_subparsers(dest='command', help='Command to run')
-    
+
     # Profile commands
     profile_parser = subparsers.add_parser('profile', help='Profile management')
     profile_sub = profile_parser.add_subparsers(dest='subcommand')
-    
+
     create_parser = profile_sub.add_parser('create', help='Create a new profile')
-    create_parser.add_argument('name', help='Profile name')
-    create_parser.add_argument('browser', help='Browser template (e.g., chrome-144)')
-    create_parser.add_argument('os', help='Operating system (windows/macos/linux)')
-    
+    # Positional style: profile create <name> <browser> <os>
+    create_parser.add_argument('name', nargs='?', default=None, help='Profile name')
+    create_parser.add_argument('browser', nargs='?', default=None, help='Browser template (e.g., chrome-144)')
+    create_parser.add_argument('os', nargs='?', default=None, help='Operating system (windows/macos/linux)')
+    # Flag style (README): profile create --name X --browser Y [--os Z]
+    create_parser.add_argument('--name', dest='opt_name', default=None, help='Profile name (flag style)')
+    create_parser.add_argument('--browser', dest='opt_browser', default=None, help='Browser template (flag style)')
+    create_parser.add_argument('--os', dest='opt_os', default=None, help='OS (flag style)')
+    create_parser.add_argument('--profile', dest='opt_profile', default=None,
+                               help='Alias for --name (supports: launch --profile style)')
+
     profile_sub.add_parser('list', help='List all profiles')
-    
+
     validate_parser = profile_sub.add_parser('validate', help='Validate a profile')
-    validate_parser.add_argument('name', help='Profile name')
-    
+    validate_parser.add_argument('name', nargs='?', default=None, help='Profile name')
+    validate_parser.add_argument('--profile', dest='opt_profile', default=None, help='Profile name (flag style)')
+
     # Fleet commands
     fleet_parser = subparsers.add_parser('fleet', help='Fleet generation')
     fleet_sub = fleet_parser.add_subparsers(dest='subcommand')
-    
+
     generate_parser = fleet_sub.add_parser('generate', help='Generate a fleet')
     generate_parser.add_argument('count', type=int, help='Number of profiles')
-    
-    # API commands
+
+    # API commands (support both `api start` and README `api --port 8080`)
     api_parser = subparsers.add_parser('api', help='API server')
+    api_parser.add_argument('--port', type=int, default=None, help='Port number (README style: ./tegufox-cli api --port 8080)')
     api_sub = api_parser.add_subparsers(dest='subcommand')
-    
+
     start_parser = api_sub.add_parser('start', help='Start API server')
     start_parser.add_argument('--port', type=int, default=8420, help='Port number')
-    
+
+    # Launch command (README: ./tegufox-cli launch --profile chrome-120)
+    launch_parser = subparsers.add_parser('launch', help='Launch browser with a profile')
+    launch_parser.add_argument('--profile', required=True, help='Profile name to launch')
+    launch_parser.add_argument('--headless', action='store_true', help='Run headless')
+
     args = parser.parse_args()
-    
+
     if not args.command:
         parser.print_help()
         return
-    
+
     # Handle commands
     if args.command == 'profile':
         manager = ProfileManager("profiles")
-        
+
         if args.subcommand == 'create':
+            name = args.opt_name or args.opt_profile or args.name
+            browser = args.opt_browser or args.browser
+            os_name = args.opt_os or args.os or "windows"
+            if not name or not browser:
+                create_parser.error(
+                    "profile create requires a name and browser.\n"
+                    "  Positional: ./tegufox-cli profile create my-profile chrome-144 windows\n"
+                    "  Flags:      ./tegufox-cli profile create --name my-profile --browser chrome-144 --os windows"
+                )
+            browser = _resolve_browser_template(browser, list(BROWSER_TEMPLATES.keys()))
+            if os_name.lower() not in ("windows", "macos", "linux"):
+                create_parser.error(f"Invalid os: {os_name}. Choose windows/macos/linux")
+            os_name = os_name.lower()
             profile = manager.generate_template(
-                browser=args.browser,
-                os=args.os,
+                browser=browser,
+                os=os_name,
             )
-            manager.save_profile(args.name, profile)
-            print(f"✓ Created profile: {args.name}")
-            
+            manager.save(profile, name)
+            print(f"Created profile: {name} (template={browser}, os={os_name})")
+
         elif args.subcommand == 'list':
-            profiles = manager.list_profiles()
+            profiles = manager.list()
             print(f"Found {len(profiles)} profiles:")
             for p in profiles:
                 print(f"  - {p}")
-                
+
         elif args.subcommand == 'validate':
-            profile = manager.load_profile(args.name)
-            report = manager.validate_profile(profile)
-            print(report.summary())
-            
+            vname = args.name or args.opt_profile
+            if not vname:
+                validate_parser.error("profile validate requires a name: ./tegufox-cli profile validate <name>")
+            profile = manager.load(vname)
+            report = manager.validate(profile, ValidationLevel.STANDARD)
+            d = report.to_dict()
+            print(f"Valid: {d['valid']}  Score: {d['score']:.2f}  Level: {d['level']}")
+            if d['errors']:
+                print("Errors:")
+                for e in d['errors']:
+                    print(f"  - {e}")
+            if d['warnings']:
+                print("Warnings:")
+                for w in d['warnings']:
+                    print(f"  - {w}")
+
     elif args.command == 'fleet':
         if args.subcommand == 'generate':
             manager = ProfileManager("profiles")
             fleet = generate_fleet(manager, args.count)
+            import time
             for i, profile in enumerate(fleet, 1):
-                name = f"fleet-{i:03d}"
-                manager.save_profile(name, profile)
-            print(f"✓ Generated {args.count} profiles")
-            
+                name = f"fleet-{int(time.time())}-{i:03d}"
+                manager.save(profile, name)
+            print(f"Generated {args.count} profiles")
+
     elif args.command == 'api':
+        port = args.port
         if args.subcommand == 'start':
-            import uvicorn
-            print(f"Starting Tegufox API on port {args.port}...")
-            print(f"Docs: http://localhost:{args.port}/docs")
-            uvicorn.run("tegufox_cli.api:app", host="0.0.0.0", port=args.port, reload=True)
+            # `api start --port X` takes precedence over bare `api --port X`
+            port = args.port if isinstance(args.port, int) else 8420
+            # argparse nests: start_parser port lives in same namespace
+            # (args.port is shared). Re-parse defensively:
+            if port is None:
+                port = 8420
+        if port is None:
+            port = 8420
+        import uvicorn
+        print(f"Starting Tegufox API on port {port}...")
+        print(f"Docs: http://localhost:{port}/docs")
+        uvicorn.run("tegufox_cli.api:app", host="0.0.0.0", port=port, reload=True)
+
+    elif args.command == 'launch':
+        manager = ProfileManager("profiles")
+        try:
+            data = manager.load(args.profile)
+        except FileNotFoundError:
+            print(f"Profile not found: {args.profile}")
+            print("Available profiles:")
+            for p in manager.list():
+                print(f"  - {p}")
+            sys.exit(1)
+        print(f"Launching profile '{args.profile}' (headless={args.headless})...")
+        try:
+            from tegufox_automation import TegufoxSession, SessionConfig
+            cfg = SessionConfig(headless=args.headless)
+            with TegufoxSession(args.profile, config=cfg) as sess:
+                sess.page.goto("https://www.browserscan.net/bot-detection")
+                print("Browser open. Close the browser window to exit.")
+                import time
+                while True:
+                    try:
+                        sess.page.title()
+                        time.sleep(1)
+                    except Exception:
+                        break
+        except ImportError as e:
+            print(f"Cannot launch: automation dependencies missing ({e})")
+            print("Install with: pip install -r requirements.txt && camoufox fetch")
+            sys.exit(1)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
 
 if __name__ == "__main__":
     main()

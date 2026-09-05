@@ -51,12 +51,12 @@ MARKET_DISTRIBUTIONS: dict = {
     ("safari-19",   "macos"):   0.07,
     ("safari-18",   "macos"):   0.04,
 
-    # Firefox versions (25% total) — PINNED to real engine milestone 146.0.x.
+    # Firefox versions (25% total) — PINNED to the live engine 152.0.4.
     # Do not add entries for other majors: JS feature probes will flag the
     # mismatch (we saw both "claims 150 / detect 146" and "claims 143 / detect 146").
-    ("firefox-146", "windows"): 0.17,
-    ("firefox-146", "macos"):   0.03,
-    ("firefox-146", "linux"):   0.05,
+    ("firefox-152.0.4", "windows"): 0.17,
+    ("firefox-152.0.4", "macos"):   0.03,
+    ("firefox-152.0.4", "linux"):   0.05,
 }
 
 

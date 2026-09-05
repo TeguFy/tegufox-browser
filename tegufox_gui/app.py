@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
     QStackedWidget,
 )
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtGui import QPixmap, QIcon
 
 from tegufox_gui.utils.styles import DarkPalette
 from tegufox_gui.components import SidebarButton
@@ -202,12 +202,30 @@ class TegufoxProfileManager(QMainWindow):
         """)
 
 
+def _app_icon() -> QIcon:
+    """Fox logo for Dock/taskbar + window title bar.
+
+    tegufox-gui is a script (no .app bundle), so without this the OS shows
+    a blank/generic Python icon.
+    """
+    here = Path(__file__).parent
+    for candidate in (here / "tegufox-tool.png", here.parent / "tegufox-browser.png"):
+        if candidate.exists():
+            icon = QIcon(str(candidate))
+            if not icon.isNull():
+                return icon
+    return QIcon()
+
+
 def main():
     app = QApplication(sys.argv)
+    app.setWindowIcon(_app_icon())
+    app.setApplicationName("Tegufox")
     font = app.font()
     font.setPointSize(12)
     app.setFont(font)
     window = TegufoxProfileManager()
+    window.setWindowIcon(_app_icon())
     window.show()
     sys.exit(app.exec())
 
